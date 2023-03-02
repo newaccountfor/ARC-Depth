@@ -13,7 +13,7 @@ import torch
 from torchvision import transforms, datasets
 from cv2 import imwrite
 import networks
-#import hr_networks
+# import hr_networks
 from layers import disp_to_depth
 from utils import download_model_if_doesnt_exist
 
@@ -24,9 +24,12 @@ def parse_args():
 
     parser.add_argument('--image_path', type=str,
                         help='path to a test image or folder of images', required=True)
+    parser.add_argument('--save_path', type=str,
+                        help='path to a test image or folder of images', required=True)
     parser.add_argument('--model_folder',type = str,
                         help='the folder name of model')
     parser.add_argument('--model_name',type = str)
+    parser.add_argument('--data_path',type = str)
     '''parser.add_argument('--model_name', type=str,
                         help='name of a pretrained model to use',
                         choices=[
@@ -95,7 +98,9 @@ def test_simple(args):
     # FINDING INPUT IMAGES
     if os.path.isfile(args.image_path):
         # Only testing on a single image
-        paths = [args.image_path]
+        f = open(args.image_path)
+        f_lines = f.readlines()
+        paths = f_lines
         output_directory = os.path.dirname(args.image_path)
     elif os.path.isdir(args.image_path):
         # Searching folder for images
@@ -113,10 +118,10 @@ def test_simple(args):
             if image_path.endswith("_disp.jpg"):
                 # don't try to predict disparity for a disparity image!
                 continue
-
             # Load image and preprocess
+            image_path = os.path.join(args.data_path, image_path).rstrip('\n')
             input_image = pil.open(image_path).convert('RGB')
-            image_name =  args.model_folder[39:-8] + args.model_name[7:] +  args.image_path[7:-4] 
+            image_name =  "-".join(image_path.split('/')[5:]).rstrip(".png")
             rgb = transforms.ToTensor()(input_image)
             
             original_width, original_height = input_image.size
@@ -141,10 +146,10 @@ def test_simple(args):
                 disp, (original_height, original_width), mode="bilinear", align_corners=False)
 
             # Saving numpy file
-            output_name = os.path.splitext(os.path.basename(image_path))[0]
-            name_dest_npy = os.path.join(output_directory, "{}_disp.npy".format(output_name))
+            # output_name = os.path.splitext(os.path.basename(image_path))[0]
+            # name_dest_npy = os.path.join(output_directory, "{}_disp.npy".format(output_name))
             scaled_disp, depth_resized = disp_to_depth(disp, 0.1, 100)
-            np.save(name_dest_npy, scaled_disp.cpu().numpy())
+            # np.save(name_dest_npy, scaled_disp.cpu().numpy())
 
             # Saving colormapped depth image
             disp_resized_np = disp_resized.squeeze().cpu().numpy()
@@ -154,19 +159,21 @@ def test_simple(args):
             mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')
             colormapped_im = (mapper.to_rgba(disp_resized_np)[:, :, :3] * 255).astype(np.uint8)
             im = pil.fromarray(colormapped_im)
-            name_dest_im = os.path.join('results',"{}_disp.jpeg".format(image_name))
+            name_dest_im = os.path.join(args.save_path,"{}_disp.jpeg".format(image_name))
             
             # concatenate both vertically
             #image = np.concatenate([rgb1, im], 0)
             # save a grey scale map for point cloud viz
             #depth_resized = depth_resized.squeeze().cpu().numpy()
+            '''
             scaled_disp = (50 / scaled_disp).squeeze().cpu().numpy()
             #scaled_disp = scaled_disp.squeeze().cpu().numpy()
             im_grey = pil.fromarray(np.uint8((scaled_disp * 255)),'L')
-            name_grey_depth = os.path.join('results',"{}_grey_disp.png".format(image_name))
-            name_corped_rgb = os.path.join('results',"rgb.png")
+            name_grey_depth = os.path.join(args.save_path,"{}_grey_disp.png".format(image_name))
+            name_corped_rgb = os.path.join(args.save_path,"rgb.png")
             im_grey.save(name_grey_depth) 
             input_r.save(name_corped_rgb)
+            '''
             #just save a single depth
             im.save(name_dest_im)
 

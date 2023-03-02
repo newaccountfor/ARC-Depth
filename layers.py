@@ -198,7 +198,7 @@ def upsample(x):
     """
     return F.interpolate(x, scale_factor=2, mode="nearest")
 
-
+'''
 def get_smooth_loss(disp, img):
     """Computes the smoothness loss for a disparity image
     The color image is used for edge-aware smoothness
@@ -213,7 +213,36 @@ def get_smooth_loss(disp, img):
     grad_disp_y *= torch.exp(-grad_img_y)
 
     return grad_disp_x.mean() + grad_disp_y.mean()
+'''
+def get_smooth_loss(disp, img):
+    b, _, h, w = disp.size()
+    a1 = 0.5
+    a2 = 0.5
+    img = F.interpolate(img, (h, w), mode='area')
 
+    disp_dx, disp_dy = gradient(disp)
+    img_dx, img_dy = gradient(img)
+
+    disp_dxx, disp_dxy = gradient(disp_dx)
+    disp_dyx, disp_dyy = gradient(disp_dy)
+
+    img_dxx, img_dxy = gradient(img_dx)
+    img_dyx, img_dyy = gradient(img_dy)
+
+    smooth1 = torch.mean(disp_dx.abs() * torch.exp(-a1 * img_dx.abs().mean(1, True))) + \
+                torch.mean(disp_dy.abs() * torch.exp(-a1 * img_dy.abs().mean(1, True)))
+
+    smooth2 = torch.mean(disp_dxx.abs() * torch.exp(-a2 * img_dxx.abs().mean(1, True))) + \
+                torch.mean(disp_dxy.abs() * torch.exp(-a2 * img_dxy.abs().mean(1, True))) + \
+                torch.mean(disp_dyx.abs() * torch.exp(-a2 * img_dyx.abs().mean(1, True))) + \
+                torch.mean(disp_dyy.abs() * torch.exp(-a2 * img_dyy.abs().mean(1, True)))
+
+    return smooth1+smooth2
+
+def gradient(D):
+    D_dy = D[:, :, 1:] - D[:, :, :-1]
+    D_dx = D[:, :, :, 1:] - D[:, :, :, :-1]
+    return D_dx, D_dy
 
 class SSIM(nn.Module):
     """Layer to compute the SSIM loss between a pair of images
@@ -266,3 +295,45 @@ def compute_depth_errors(gt, pred):
     sq_rel = torch.mean((gt - pred) ** 2 / gt)
 
     return abs_rel, sq_rel, rmse, rmse_log, a1, a2, a3
+class Backproject(nn.Module):
+    def __init__(self, batch_size, height, width):
+        super(Backproject, self).__init__()
+
+        self.batch_size = batch_size
+        self.height = height
+        self.width = width
+
+        meshgrid = np.meshgrid(range(self.width), range(self.height), indexing='xy')
+        self.id_coords = np.stack(meshgrid, axis=0).astype(np.float32)
+        self.id_coords = torch.from_numpy(self.id_coords)
+        self.ones = torch.ones(self.batch_size, 1, self.height * self.width)
+        self.pix_coords = torch.unsqueeze(torch.stack([self.id_coords[0].view(-1), self.id_coords[1].view(-1)], 0), 0)
+        self.pix_coords = self.pix_coords.repeat(batch_size, 1, 1)
+        self.pix_coords = torch.cat([self.pix_coords, self.ones], 1)
+
+    def forward(self, depth, inv_K):
+        cam_points = torch.matmul(inv_K[:, :3, :3], self.pix_coords.cuda())
+        cam_points = depth.view(self.batch_size, 1, -1) * cam_points
+        cam_points = torch.cat([cam_points, self.ones.cuda()], 1)
+        return cam_points
+
+
+class Project(nn.Module):
+    def __init__(self, batch_size, height, width, eps=1e-7):
+        super(Project, self).__init__()
+
+        self.batch_size = batch_size
+        self.height = height
+        self.width = width
+        self.eps = eps
+
+    def forward(self, points, K, T):
+        P = torch.matmul(K, T)[:, :3, :]
+        cam_points = torch.matmul(P, points)
+        pix_coords = cam_points[:, :2, :] / (cam_points[:, 2, :].unsqueeze(1) + self.eps)
+        pix_coords = pix_coords.view(self.batch_size, 2, self.height, self.width)
+        pix_coords = pix_coords.permute(0, 2, 3, 1)
+        pix_coords[..., 0] /= self.width - 1
+        pix_coords[..., 1] /= self.height - 1
+        pix_coords = (pix_coords - 0.5) * 2
+        return pix_coords

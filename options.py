@@ -19,7 +19,7 @@ class MonodepthOptions:
         self.parser.add_argument("--log_dir",
                                  type=str,
                                  help="log directory",
-                                 default=os.path.join(os.getcwd(), "tmp_hpc"))
+                                 default=os.path.join(os.getcwd(), "tmp"))
 
         # TRAINING options
         self.parser.add_argument("--model_name",
@@ -36,6 +36,12 @@ class MonodepthOptions:
                                  help="number of resnet layers",
                                  default=18,
                                  choices=[18, 34, 50, 101, 152])
+        self.parser.add_argument("--auto_prtrained_model",
+                                 type=str,
+                                 help="auto pretrained model",
+                                 default="/home/sba/wubiao/newidea-newbackbone/pretrained-model/autoencoder.pth",
+                                 )
+     
         self.parser.add_argument("--dataset",
                                  type=str,
                                  help="dataset to train on",
@@ -52,10 +58,18 @@ class MonodepthOptions:
                                  type=int,
                                  help="input image width",
                                  default=640)
+        self.parser.add_argument("--perception_weight",
+                                 type=float,
+                                 help="perception weight",
+                                 default=1e-3)
         self.parser.add_argument("--disparity_smoothness",
                                  type=float,
                                  help="disparity smoothness weight",
                                  default=1e-3)
+        self.parser.add_argument("--pose_weight",
+                                 type=float,
+                                 help="pose loss weight",
+                                 default=1e-2)
         self.parser.add_argument("--scales",
                                  nargs="+",
                                  type=int,

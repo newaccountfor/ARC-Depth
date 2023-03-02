@@ -204,7 +204,6 @@ def upsample(x):
     """
     return F.interpolate(x, scale_factor=2, mode="nearest")
 
-
 def get_smooth_loss(disp, img):
     """Computes the smoothness loss for a disparity image
     The color image is used for edge-aware smoothness
@@ -272,3 +271,5 @@ def compute_depth_errors(gt, pred):
     sq_rel = torch.mean((gt - pred) ** 2 / gt)
 
     return abs_rel, sq_rel, rmse, rmse_log, a1, a2, a3
+
+
