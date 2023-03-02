@@ -5,7 +5,7 @@ import torch.nn as nn
 from collections import OrderedDict
 
 
-class PoseDecoder(nn.Module):
+""" class PoseDecoder(nn.Module):
     def __init__(self, num_ch_enc, num_input_features, num_frames_to_predict_for=None, stride=1):
         super(PoseDecoder, self).__init__()
         #num_ch_enc = [64,64,128,256,512]
@@ -51,13 +51,11 @@ class PoseDecoder(nn.Module):
         #print(translation.size())
         #input()
         return axisangle, translation
-        #return 2 tensors which size is 12 * 2 * 1 * 3 
-class PoseDecoder_only_t(nn.Module):
+        #return 2 tensors which size is 12 * 2 * 1 * 3  
+"""
+class PoseDecoder_for_t(nn.Module):
     def __init__(self, num_ch_enc, num_input_features, num_frames_to_predict_for=None, stride=1):
-        super(PoseDecoder_only_t, self).__init__()
-        #num_ch_enc = [64,64,128,256,512]
-        #num_input_features = 1
-        #num_frames_to_predict_for = 2
+        super(PoseDecoder_for_t, self).__init__()
         self.num_ch_enc = num_ch_enc
         self.num_input_features = num_input_features
 
@@ -71,15 +69,13 @@ class PoseDecoder_only_t(nn.Module):
         self.convs[("pose", 1)] = nn.Conv2d(256, 256, 3, stride, 1)
         self.convs[("pose", 2)] = nn.Conv2d(256, 3 * num_frames_to_predict_for, 1)
 
-        self.relu = nn.ReLU()#in depthdecoder activation function is sigmoid()
+        self.relu = nn.ReLU()
 
         self.net = nn.ModuleList(list(self.convs.values()))
 
     def forward(self, input_features):
         #input_features is a list which just has a element but the element has 5 scales feature maps. 
         last_features = [f[-1] for f in input_features]#only collect last_feature?
-        #so last_features only has a 512*6*20 feature map
-        #print(last_features[0].size())
         cat_features = [self.relu(self.convs["squeeze"](f)) for f in last_features]
         cat_features = torch.cat(cat_features,1)
         out = cat_features
@@ -89,22 +85,13 @@ class PoseDecoder_only_t(nn.Module):
                 out = self.relu(out)
 
         out = out.mean(3).mean(2)
-        #out.size = 12*12
         out = 0.01 * out.view(-1, self.num_frames_to_predict_for, 1, 3)
-        #out.size = 12 * 2 * 1 * 6
-        # axisangle = out[..., :3]
         translation = out
-        #print(axisangle.size())
-        #print(translation.size())
-        #input()
         return translation
 
-class PoseDecoder_only_r(nn.Module):
+class PoseDecoder_for_r(nn.Module):
     def __init__(self, num_ch_enc, num_input_features, num_frames_to_predict_for=None, stride=1):
-        super(PoseDecoder_only_r, self).__init__()
-        #num_ch_enc = [64,64,128,256,512]
-        #num_input_features = 1
-        #num_frames_to_predict_for = 2
+        super(PoseDecoder_for_r, self).__init__()
         self.num_ch_enc = num_ch_enc
         self.num_input_features = num_input_features
 
@@ -118,15 +105,12 @@ class PoseDecoder_only_r(nn.Module):
         self.convs[("pose", 1)] = nn.Conv2d(256, 256, 3, stride, 1)
         self.convs[("pose", 2)] = nn.Conv2d(256, 3 * num_frames_to_predict_for, 1)
 
-        self.relu = nn.ReLU()#in depthdecoder activation function is sigmoid()
+        self.relu = nn.ReLU()
 
         self.net = nn.ModuleList(list(self.convs.values()))
 
-    def forward(self, input_features):
-        #input_features is a list which just has a element but the element has 5 scales feature maps. 
-        last_features = [f[-1] for f in input_features]#only collect last_feature?
-        #so last_features only has a 512*6*20 feature map
-        #print(last_features[0].size())
+    def forward(self, input_features): 
+        last_features = [f[-1] for f in input_features]
         cat_features = [self.relu(self.convs["squeeze"](f)) for f in last_features]
         cat_features = torch.cat(cat_features,1)
         out = cat_features
@@ -136,12 +120,6 @@ class PoseDecoder_only_r(nn.Module):
                 out = self.relu(out)
 
         out = out.mean(3).mean(2)
-        #out.size = 12*12
         out = 0.01 * out.view(-1, self.num_frames_to_predict_for, 1, 3)
-        #out.size = 12 * 2 * 1 * 6
         axisangle = out
-        # translation = out
-        #print(axisangle.size())
-        #print(translation.size())
-        #input()
         return axisangle

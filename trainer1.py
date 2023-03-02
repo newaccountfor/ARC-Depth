@@ -4,27 +4,15 @@ import numpy as np
 import time
 import torch
 import torch.nn.functional as F
-from torchvision.transforms.functional import hflip
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import json
-import torchvision
+
 from utils import *
 from kitti_utils import *
 from layers import *
 import datasets
 import networks
-
-
-def build_extractor(num_layers, pretrained_path):
-    extractor = networks.ResnetEncoder(50, None)
-    if pretrained_path is not None:
-        checkpoint = torch.load(pretrained_path, map_location='cpu')
-        for name, param in extractor.state_dict().items():
-            extractor.state_dict()[name].copy_(checkpoint['state_dict']['Encoder.' + name])
-        for param in extractor.parameters():
-            param.requires_grad = False
-    return extractor
 
 class Trainer:
     def __init__(self, options):
@@ -58,11 +46,7 @@ class Trainer:
         
         self.models["encoder"] = networks.test_hr_encoder.hrnet18(True)
         self.models["encoder"].num_ch_enc = [ 64, 18, 36, 72, 144 ]
-        if self.opt.auto_prtrained_model:
-            self.extractor = build_extractor(50, self.opt.auto_prtrained_model)
-            self.extractor.to(self.device)
-        else:
-            self.extractor = False
+
         para_sum = sum(p.numel() for p in self.models['encoder'].parameters())
         print('params in encoder',para_sum)
         
@@ -77,56 +61,36 @@ class Trainer:
         para_sum = sum(p.numel() for p in self.models['depth'].parameters())
         print('params in depth decdoer',para_sum)
 
-        if self.use_pose_net:#use_pose_net = True
-            if self.opt.pose_model_type == "separate_resnet":#defualt=separate_resnet  choice = ['normal or shared']
+        if self.use_pose_net:  #use_pose_net = True
+            if self.opt.pose_model_type == "separate_resnet":  #defualt=separate_resnet  choice = ['normal or shared']
                 
-                # 输出 translation 和 rotation的PoseNet
+                # Pose estimation's Encoder
                 self.models["pose_encoder"] = networks.ResnetEncoder(
                     self.opt.num_layers,
                     self.opt.weights_init == "pretrained",
                     num_input_images=self.num_pose_frames)#num_input_images=2
                 
-                self.models["pose"] = networks.PoseDecoder(
-                    self.models["pose_encoder"].num_ch_enc,
-                    num_input_features=1,
-                    num_frames_to_predict_for=2)
-                
-                # 只输出 translation PoseNet
-                '''
-                self.models["pose_encoder_only_t"] = networks.ResnetEncoder(
-                    self.opt.num_layers,
-                    self.opt.weights_init == "pretrained",
-                    num_input_images=self.num_pose_frames)#num_input_images=2
-                '''
-                self.models["pose_only_t"] = networks.PoseDecoder_only_t(
+                # Only output translation
+                self.models["pose_for_t"] = networks.PoseDecoder_for_t(
                     self.models["pose_encoder"].num_ch_enc,
                     num_input_features=1,
                     num_frames_to_predict_for=2)
 
-                # 只输出 rotation PoseNet
-                '''
-                self.models["pose_encoder_only_r"] = networks.ResnetEncoder(
-                    self.opt.num_layers,
-                    self.opt.weights_init == "pretrained",
-                    num_input_images=self.num_pose_frames)#num_input_images=2
-                '''
-
-                self.models["pose_only_r"] = networks.PoseDecoder_only_r(
+                # only output rotation
+                self.models["pose_for_r"] = networks.PoseDecoder_for_r(
                     self.models["pose_encoder"].num_ch_enc,
                     num_input_features=1,
                     num_frames_to_predict_for=2)
 
             self.models["pose_encoder"].cuda()
-            self.models["pose"].cuda()
-            #self.models["pose_encoder_only_t"].cuda()
-            self.models["pose_only_t"].cuda()
-            #self.models["pose_encoder_only_r"].cuda()
-            self.models["pose_only_r"].cuda()
+            self.models["pose_for_t"].cuda()
+            self.models["pose_for_r"].cuda()
 
-            self.parameters_to_train += list(self.models["pose"].parameters())
+            self.parameters_to_train += list(self.models["pose_for_t"].parameters())
+            self.parameters_to_train += list(self.models["pose_for_r"].parameters())
             self.parameters_to_train += list(self.models["pose_encoder"].parameters())
         
-        self.model_optimizer = optim.Adam(self.parameters_to_train, self.opt.learning_rate)#learning_rate=1e-4
+        self.model_optimizer = optim.Adam(self.parameters_to_train, self.opt.learning_rate) #learning_rate=1e-4
         #self.model_optimizer = optim.Adam(self.parameters_to_train, 0.5 * self.opt.learning_rate)#learning_rate=1e-4
         self.model_lr_scheduler = optim.lr_scheduler.StepLR(
             self.model_optimizer, self.opt.scheduler_step_size, 0.1)#defualt = 15'step size of the scheduler'
@@ -156,7 +120,7 @@ class Trainer:
         #dataloader for kitti
         train_dataset_k = self.dataset_k(
             self.opt.data_path, train_filenames_k, self.opt.height, self.opt.width,
-            self.opt.frame_ids, 4, is_train=True, img_ext='.jpg')
+            self.opt.frame_ids, 4, is_train=True, img_ext = '.jpg')
         self.train_loader_k = DataLoader(
             train_dataset_k, self.opt.batch_size, True,
             num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
@@ -178,12 +142,6 @@ class Trainer:
 
         self.backproject_depth = {}
         self.project_3d = {}
-
-        # feature generated
-        self.backproject_feature = Backproject(self.opt.batch_size, int(self.opt.height/2), int(self.opt.width/2))
-        self.project_feature = Project(self.opt.batch_size, int(self.opt.height/2), int(self.opt.width/2))
-        self.backproject_feature.to(self.device)
-        self.project_feature.to(self.device)
 
         for scale in self.opt.scales:
             h = self.opt.height // (2 ** scale)#defualt=[0,1,2,3]'scales used in the loss'
@@ -207,7 +165,7 @@ class Trainer:
     def set_train(self):
         """Convert all models to training mode
         """
-        for k,m in self.models.items():
+        for m in self.models.values():
             m.train()
 
     def set_eval(self):
@@ -220,7 +178,7 @@ class Trainer:
         """Run the entire training pipeline
         """
         self.init_time = time.time()
-        if isinstance(self.opt.load_weights_folder,str):
+        if isinstance(self.opt.load_weights_folder, str):
             self.epoch_start = int(self.opt.load_weights_folder[-1]) + 1
         else:
             self.epoch_start = 0
@@ -301,7 +259,6 @@ class Trainer:
             outputs.update(self.predict_poses(inputs, features))
 
         self.generate_images_pred(inputs, outputs)
-        self.generate_features_pred(inputs, outputs)
         losses = self.compute_losses(inputs, outputs)
 
         return outputs, losses
@@ -336,56 +293,43 @@ class Trainer:
                         pose_inputs = [pose_feats[0], pose_feats[f_i]]
 
                     if self.opt.pose_model_type == "separate_resnet":
-                        # translation 和 rotation 均预测
                         pose_inputs = [self.models["pose_encoder"](torch.cat(pose_inputs, 1))]
-                        '''
-                        # 只预测 translation
-                        pose_inputs_only_t = [self.models["pose_encoder_only_t"](torch.cat(pose_inputs, 1))]
-                        # 只预测 rotation
-                        pose_inputs_only_r = [self.models["pose_encoder_only_r"](torch.cat(pose_inputs, 1))]
-                        '''
                     elif self.opt.pose_model_type == "posecnn":
                         pose_inputs = torch.cat(pose_inputs, 1)
 
-                    # translations 和 rotation 均预测的网路
-                    axisangle, translation = self.models["pose"](pose_inputs)
-                    outputs[("axisangle", 0, f_i)] = axisangle
-                    outputs[("translation", 0, f_i)] = translation
-                    # 单个的translations 和 rotation
-                    axisangle_only_r = self.models["pose_only_r"](pose_inputs)
-                    translation_only_t = self.models["pose_only_t"](pose_inputs)
-                    outputs[("axisangle_only_r", 0, f_i)] = axisangle_only_r
-                    outputs[("translation_only_t", 0, f_i)] = translation_only_t
-                    #axisangle and translation are two 2*1*3 matrix
-                    #f_i=-1,1
-                    # Invert the matrix if the frame id is negative
-                    # translation 和 rotation均预测的网络
-                    outputs[("cam_T_cam", 0, f_i)] = transformation_from_parameters(
-                        axisangle[:, 0], translation[:, 0], invert=(f_i < 0))
-                    axisangle_temp = torch.zeros_like(axisangle)
-                    outputs[("cam_T_cam_only_t", 0, f_i)] = transformation_from_parameters(
-                        axisangle_temp[:, 0], translation_only_t[:, 0], invert=(f_i < 0))
+                    # only estimation translation and only estimate rotation
+                    translation_for_t = self.models["pose_for_t"](pose_inputs)
+                    axisangle_for_r = self.models["pose_for_r"](pose_inputs)
+                    outputs[("axisangle_for_r", 0, f_i)] = axisangle_for_r
+                    outputs[("translation_for_t", 0, f_i)] = translation_for_t
+                    
+                    # only for t
+                    axisangle_temp = torch.zeros_like(axisangle_for_r)
+                    outputs[("cam_T_cam_for_t", 0, f_i)] = transformation_from_parameters(
+                        axisangle_temp[:, 0], translation_for_t[:, 0], invert=(f_i < 0))
+                    # only for r
+                    translation_temp = torch.zeros_like(translation_for_t)
+                    outputs[("cam_T_cam_for_r", 0, f_i)] = transformation_from_parameters(
+                        axisangle_for_r[:, 0], translation_temp[:, 0], invert=(f_i < 0))
+                    # r and t
                     outputs[("cam_T_cam_r_and_t", 0, f_i)] = transformation_from_parameters(
-                        axisangle_only_r[:, 0], translation_only_t[:, 0], invert=(f_i < 0))
-                    translation_temp = torch.zeros_like(translation)
-                    outputs[("cam_T_cam_only_r", 0, f_i)] = transformation_from_parameters(
-                        axisangle_only_r[:, 0], translation_temp[:, 0], invert=(f_i < 0))
+                        axisangle_for_r[:, 0], translation_for_t[:, 0], invert=(f_i < 0))
                     
 
-        else:
+        """ else:
             # Here we input all frames to the pose net (and predict all poses) together
             if self.opt.pose_model_type in ["separate_resnet", "posecnn"]:
                 pose_inputs = torch.cat(
                     [inputs[("color_aug", i, 0)] for i in self.opt.frame_ids if i != "s"], 1)
 
                 if self.opt.pose_model_type == "separate_resnet":
-                    # t r 均预测
+
                     pose_inputs = [self.models["pose_encoder"](pose_inputs)]
                     
                     # 只预测 translation
-                    pose_inputs_only_t = [self.models["pose_encoder_only_t"](torch.cat(pose_inputs, 1))]
+                    pose_inputs_for_t = [self.models["pose_encoder_only_t"](torch.cat(pose_inputs, 1))]
                     # 只预测 rotation
-                    pose_inputs_only_r = [self.models["pose_encoder_only_r"](torh.cat(pose_inputs, 1))]
+                    pose_inputs_for_r = [self.models["pose_encoder_only_r"](torch.cat(pose_inputs, 1))]
                     
                     
 
@@ -410,7 +354,8 @@ class Trainer:
                     outputs[("cam_T_cam_r_and_t", 0, f_i)] = transformation_from_parameters(
                         axisangle_only_r[:, 0], translation_only_t[:, 0], invert=(f_i < 0))
                     outputs[("cam_T_cam", 0, f_i)] = transformation_from_parameters(
-                        axisangle[:, i], translation[:, i])
+                        axisangle[:, i], translation[:, i]) 
+            """
 
         return outputs
 
@@ -452,18 +397,16 @@ class Trainer:
 
             outputs[("depth", 0, scale)] = depth
 
-            for i, frame_id in enumerate(self.opt.frame_ids[1:]):
+            for _, frame_id in enumerate(self.opt.frame_ids[1:]):
 
                 if frame_id == "s":
                     T = inputs["stereo_T"]
                 else:
-                    # 同时预测r 和 t 的网络得到的结果
-                    T = outputs[("cam_T_cam", 0, frame_id)]
-                    T_only_t = outputs[("cam_T_cam_only_t", 0, frame_id)]
+                    T_for_t = outputs[("cam_T_cam_for_t", 0, frame_id)]
                     T_r_and_t = outputs[("cam_T_cam_r_and_t", 0, frame_id)]
-                    T_only_r = outputs[("cam_T_cam_only_r", 0, frame_id)]
+                    T_for_r = outputs[("cam_T_cam_for_r", 0, frame_id)]
                 # from the authors of https://arxiv.org/abs/1712.00175
-                if self.opt.pose_model_type == "posecnn":
+                """ if self.opt.pose_model_type == "posecnn":
 
                     axisangle = outputs[("axisangle", 0, frame_id)]
                     translation = outputs[("translation", 0, frame_id)]
@@ -473,40 +416,33 @@ class Trainer:
 
                     T = transformation_from_parameters(
                         axisangle[:, 0], translation[:, 0] * mean_inv_depth[:, 0], frame_id < 0)
-
-                # 同时预测r和t的网络
+                """
                 cam_points = self.backproject_depth[source_scale](
                     depth, inputs[("inv_K", source_scale)])
-                pix_coords = self.project_3d[source_scale](
-                    cam_points, inputs[("K", source_scale)], T)
-                outputs[("sample", frame_id, scale)] = pix_coords
-
-                outputs[("color", frame_id, scale)] = F.grid_sample(
-                    inputs[("color", frame_id, source_scale)],
-                    outputs[("sample", frame_id, scale)],
-                    padding_mode="border")
                 
-                # 只预测t
-                pix_coords_only_t = self.project_3d[source_scale](
-                    cam_points, inputs[("K", source_scale)], T_only_t)
-                outputs[("sample_only_t", frame_id, scale)] = pix_coords_only_t
+                # trasnlation
+                pix_coords_for_t = self.project_3d[source_scale](
+                    cam_points, inputs[("K", source_scale)], T_for_t)
+                
+                outputs[("sample_for_t", frame_id, scale)] = pix_coords_for_t
 
-                outputs[("color_only_t", frame_id, scale)] = F.grid_sample(
+                outputs[("color_for_t", frame_id, scale)] = F.grid_sample(
                     inputs[("color", frame_id, source_scale)],
-                    outputs[("sample_only_t", frame_id, scale)],
+                    outputs[("sample_for_t", frame_id, scale)],
                     padding_mode="border")
 
-                # 只预测r
-                pix_coords_only_r = self.project_3d[source_scale](
-                    cam_points, inputs[("K", source_scale)], T_only_r)
-                outputs[("sample_only_r", frame_id, scale)] = pix_coords_only_r
+                # rotation
+                pix_coords_for_r = self.project_3d[source_scale](
+                    cam_points, inputs[("K", source_scale)], T_for_r)
+                
+                outputs[("sample_for_r", frame_id, scale)] = pix_coords_for_r
 
-                outputs[("color_only_r", frame_id, scale)] = F.grid_sample(
+                outputs[("color_for_r", frame_id, scale)] = F.grid_sample(
                     inputs[("color", frame_id, source_scale)],
-                    outputs[("sample_only_r", frame_id, scale)],
+                    outputs[("sample_for_r", frame_id, scale)],
                     padding_mode="border")
 
-                # 单独的r和t组合
+                # translation and rotation
                 pix_coords_r_and_t = self.project_3d[source_scale](
                     cam_points, inputs[("K", source_scale)], T_r_and_t)
                 outputs[("sample_r_and_t", frame_id, scale)] = pix_coords_r_and_t
@@ -518,55 +454,7 @@ class Trainer:
 
                 if not self.opt.disable_automasking:
                     #doing this
-                    outputs[("color_identity", frame_id, scale)] = \
-                        inputs[("color", frame_id, source_scale)]
-    def generate_features_pred(self, inputs, outputs):
-        disp = outputs[("disp", 0)]
-        disp = F.interpolate(disp, [int(self.opt.height/2), int(self.opt.width/2)], mode="bilinear", align_corners=False)
-        _, depth = disp_to_depth(disp, self.opt.min_depth, self.opt.max_depth)
-        for i, frame_id in enumerate(self.opt.frame_ids[1:]):
-            if frame_id == "s":
-                T = inputs["stereo_T"]
-            else:
-                T = outputs[("cam_T_cam", 0, frame_id)]
-                T_only_t = outputs[("cam_T_cam_only_t", 0, frame_id)]
-                T_r_and_t = outputs[("cam_T_cam_r_and_t", 0, frame_id)]
-                T_only_r = outputs[("cam_T_cam_only_r", 0, frame_id)]
-
-            K = inputs[("K", 0)].clone()
-            K[:, 0, :] /= 2
-            K[:, 1, :] /= 2
-
-            inv_K = torch.zeros_like(K)
-            for i in range(inv_K.shape[0]):
-                inv_K[i, :, :] = torch.pinverse(K[i, :, :])
-
-            cam_points = self.backproject_feature(depth, inv_K)
-            pix_coords = self.project_feature(cam_points, K, T)  # [b,h,w,2]
-
-            img = inputs[("color", frame_id, 0)]
-            src_f = self.extractor(img)[0]
-            outputs[("feature", frame_id, 0)] = F.grid_sample(src_f, pix_coords, padding_mode="border")
-
-            # only t
-            pix_coords_only_t = self.project_feature(cam_points, K, T_only_t)  # [b,h,w,2]
-            outputs[("feature_only_t", frame_id, 0)] = F.grid_sample(src_f, pix_coords_only_t, padding_mode="border")
-
-            # only r
-            pix_coords_only_r = self.project_feature(cam_points, K, T_only_r)  # [b,h,w,2]
-            outputs[("feature_only_r", frame_id, 0)] = F.grid_sample(src_f, pix_coords_only_r, padding_mode="border")
-
-            # t and r
-            pix_coords_r_and_t = self.project_feature(cam_points, K, T_r_and_t)  # [b,h,w,2]
-            outputs[("feature_r_and_t", frame_id, 0)] = F.grid_sample(src_f, pix_coords_r_and_t, padding_mode="border")
-            
-    def robust_l1(self, pred, target):
-        eps = 1e-3
-        return torch.sqrt(torch.pow(target - pred, 2) + eps ** 2)
-
-    def compute_perceptional_loss(self, tgt_f, src_f):
-        loss = self.robust_l1(tgt_f, src_f).mean(1, True)
-        return loss
+                    outputs[("color_identity", frame_id, scale)] = inputs[("color", frame_id, source_scale)]
 
     def compute_reprojection_loss(self, pred, target):
         """Computes reprojection loss between a batch of predicted and target images
@@ -581,25 +469,18 @@ class Trainer:
             reprojection_loss = 0.85 * ssim_loss + 0.15 * l1_loss
 
         return reprojection_loss
-    def judge_static(self, inputs):
-        f_1, f_2, f_3 = inputs[("color_aug", -1, 0)], inputs[("color_aug", 0, 0)], inputs[("color_aug", 1, 0)]
-
 
     def compute_losses(self, inputs, outputs):
         """Compute the reprojection and smoothness losses for a minibatch
         """
         losses = {}
         total_loss = 0
-        visit = False
 
         for scale in self.opt.scales:
             #scales=[0,1,2,3]
             loss = 0
             reprojection_losses = []
-            perceptional_losses = []
 
-            pose_loss = [0, 0]
-            times = [0, 0]
             if self.opt.v1_multiscale:
                 source_scale = scale
             else:
@@ -609,78 +490,18 @@ class Trainer:
             color = inputs[("color", 0, scale)]
             target = inputs[("color", 0, source_scale)]
 
-            """
-            minimum perceptional loss
-            """
-            if not visit:
-                for frame_id in self.opt.frame_ids[1:]:
-                    src_f = outputs[("feature", frame_id, 0)]
-                    src_f_only_t = outputs[("feature_only_t", frame_id, 0)]
-                    src_f_r_and_t = outputs[("feature_r_and_t", frame_id, 0)]
-                    src_f_only_r = outputs[("feature_only_r", frame_id, 0)]
-                    tgt_f = self.extractor(inputs[("color", 0, 0)])[0]
-
-                    src_f_loss = self.compute_perceptional_loss(tgt_f, src_f)
-                    src_f_only_t_loss = self.compute_perceptional_loss(tgt_f, src_f_only_t)
-                    src_f_r_and_t_loss = self.compute_perceptional_loss(tgt_f, src_f_r_and_t)
-                    src_f_only_r_loss = self.compute_perceptional_loss(tgt_f, src_f_only_r)
-
-                    final, _ = torch.min(torch.cat((src_f_loss, src_f_only_t_loss, src_f_r_and_t_loss, src_f_only_r_loss), 1), 1, True)
-                    perceptional_losses.append(final)
-                perceptional_loss = torch.cat(perceptional_losses, 1)
-
-                min_perceptional_loss, _ = torch.min(perceptional_loss, dim=1)
-                loss += 4 * self.opt.perception_weight * min_perceptional_loss.mean()
-                visit = True
-
-
             for frame_id in self.opt.frame_ids[1:]:
-                pred = outputs[("color", frame_id, scale)]
-                pred_only_t = outputs[("color_only_t", frame_id, scale)]
-                pred_r_and_t = outputs[("color_r_and_t", frame_id, scale)]
-                pred_only_r = outputs[("color_only_r", frame_id, scale)] 
-
-                loss_pred = self.compute_reprojection_loss(pred, target)
-                loss_pred_only_t = self.compute_reprojection_loss(pred_only_t, target)
-                loss_pred_r_and_t = self.compute_reprojection_loss(pred_r_and_t, target)
-                loss_pred_only_r = self.compute_reprojection_loss(pred_only_r, target)
-                final, _ = torch.min(torch.cat((loss_pred, loss_pred_only_t, loss_pred_r_and_t, loss_pred_only_r), 1), 1, True)
-                reprojection_losses.append(final)
-                # l_pred_split = torch.split(loss_pred, 1, dim=0)
-                # l_pred_only_t_split = torch.split(loss_pred_only_t, 1, dim=0)
-                # l_pred_r_and_t_split = torch.split(loss_pred_r_and_t, 1, dim=0)
-
-                # temp_reprojection_losses_for_one_image = []
                 
-                # for i in range(len(l_pred_split)):
-                #     a, b, c = torch.sum(l_pred_split[i]), torch.sum(l_pred_only_t_split[i]), torch.sum(l_pred_r_and_t_split[i])
-                #     if b <= a and b <= c:
-                #         temp_reprojection_losses_for_one_image.append(l_pred_only_t_split[i])
-                #         times[0] += 1
-                #         pose_loss[0] += torch.mean(torch.abs(outputs[("translation", 0, frame_id)][i, :, :, :] - outputs[("translation_only_t", 0, frame_id)][i, :, :, :]))
-                #     elif a <= b and a <= c:
-                #         temp_reprojection_losses_for_one_image.append(l_pred_split[i])
-                #         times[0] += 1
-                #         times[1] += 1
-                #         pose_loss[0] += torch.mean(torch.abs(outputs[("translation", 0, frame_id)][i, :, :, :] - outputs[("translation_only_t", 0, frame_id)][i, :, :, :]))
-                #         pose_loss[1] += torch.mean(torch.abs(outputs[("axisangle", 0, frame_id)][i, :, :, :] - outputs[("axisangle_only_r", 0, frame_id)][i, :, :, :]))
-                #     else:
-                #         temp_reprojection_losses_for_one_image.append(l_pred_r_and_t_split[i])
-                #         times[0] += 1
-                #         times[1] += 1
-                #         pose_loss[0] += torch.mean(torch.abs(outputs[("translation", 0, frame_id)][i, :, :, :] - outputs[("translation_only_t", 0, frame_id)][i, :, :, :]))
-                #         pose_loss[1] += torch.mean(torch.abs(outputs[("axisangle", 0, frame_id)][i, :, :, :] - outputs[("axisangle_only_r", 0, frame_id)][i, :, :, :]))
-                # temp_reprojection_losses_for_one_image = torch.cat(temp_reprojection_losses_for_one_image, 0)
-                # reprojection_losses.append(temp_reprojection_losses_for_one_image)
-                # 此处写pose的idea的地方
-                # 需要更新三个Pose Encoder和Decoder
+                pred_for_t = outputs[("color_for_t", frame_id, scale)]
+                pred_r_and_t = outputs[("color_r_and_t", frame_id, scale)]
+                pred_for_r = outputs[("color_for_r", frame_id, scale)] 
+
+                loss_pred_for_t = self.compute_reprojection_loss(pred_for_t, target)
+                loss_pred_r_and_t = self.compute_reprojection_loss(pred_r_and_t, target)
+                loss_pred_for_r = self.compute_reprojection_loss(pred_for_r, target)
+                final, _ = torch.min(torch.cat((loss_pred_for_t, loss_pred_r_and_t, loss_pred_for_r), 1), 1, True)
+                reprojection_losses.append(final)
             reprojection_losses = torch.cat(reprojection_losses, 1)
-
-            # 加上pose的loss
-            # for idx, v, in enumerate(pose_loss):
-            #     if times[idx] != 0:
-            #         loss += self.opt.pose_weight * v / times[idx]
-
 
             if not self.opt.disable_automasking:
                 #doing this 
@@ -873,11 +694,14 @@ class Trainer:
         for n in self.opt.models_to_load:
             print("Loading {} weights...".format(n))
             path = os.path.join(self.opt.load_weights_folder, "{}.pth".format(n))
-            model_dict = self.models[n].state_dict()
-            pretrained_dict = torch.load(path)
-            pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
-            model_dict.update(pretrained_dict)
-            self.models[n].load_state_dict(model_dict)
+            if n == "pose":
+                continue
+            else:
+                model_dict = self.models[n].state_dict()
+                pretrained_dict = torch.load(path)
+                pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+                model_dict.update(pretrained_dict)
+                self.models[n].load_state_dict(model_dict)
 
         # loading adam state
         optimizer_load_path = os.path.join(self.opt.load_weights_folder, "adam.pth")

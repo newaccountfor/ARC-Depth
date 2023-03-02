@@ -10,6 +10,9 @@ class MonodepthOptions:
     def __init__(self):
         self.parser = argparse.ArgumentParser(description="Monodepthv2 options")
 
+        self.parser.add_argument("--train_which",
+                                type=int,
+                                help="which model to train, please ref to trainer_explain.txt",)
         # PATHS
         self.parser.add_argument("--data_path",
                                  type=str,
@@ -19,7 +22,7 @@ class MonodepthOptions:
         self.parser.add_argument("--log_dir",
                                  type=str,
                                  help="log directory",
-                                 default=os.path.join(os.getcwd(), "tmp"))
+                                 default="../model/only_pose")
 
         # TRAINING options
         self.parser.add_argument("--model_name",

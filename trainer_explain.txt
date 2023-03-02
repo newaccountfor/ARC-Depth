@@ -1,0 +1,1 @@
+trainer1.py表示只有pose idea的训练函数  ===>  对应start2train1.sh  ===> 模型存储在 ../model/only_pose
