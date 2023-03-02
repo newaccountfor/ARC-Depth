@@ -1,0 +1,1 @@
+python test_sample.py --image_path ../../KITTI/datasets/raw_data --model_folder /home/sba/wubiao/newidea-newbackbone/DIFFNet-original/tmp_hpc/mono_model/17052022-20:12:35/models/ --model_name weights_19
