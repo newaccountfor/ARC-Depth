@@ -800,10 +800,11 @@ class Trainer:
                 outputs["identity_selection/{}".format(0)] = (
                     idxs > identity_reprojection_loss.shape[1] - 1).float()
 
-            # teacher help student in depth estimation
-            selective_help = teacher_min_loss < student_min_loss
-            multiply_result = selective_help * torch.abs(disp - disp_teacher)
-            loss += torch.mean(multiply_result) * (2 ** scale)
+            if self.opt.use_teacher == True:
+                # teacher help student in depth estimation
+                selective_help = teacher_min_loss < student_min_loss
+                multiply_result = selective_help * torch.abs(disp - disp_teacher)
+                loss += torch.mean(multiply_result) * (2 ** scale)
 
             loss += to_optimise.mean()
             mean_disp = disp.mean(2, True).mean(3, True)
@@ -948,8 +949,11 @@ class Trainer:
         # loading adam state
         optimizer_load_path = os.path.join(self.opt.load_weights_folder, "adam.pth")
         if os.path.isfile(optimizer_load_path):
-            print("Loading Adam weights")
-            optimizer_dict = torch.load(optimizer_load_path)
-            self.model_optimizer.load_state_dict(optimizer_dict)
+            try:
+                print("Loading Adam weights")
+                optimizer_dict = torch.load(optimizer_load_path)
+                self.model_optimizer.load_state_dict(optimizer_dict)
+            except Exception as e:
+                print(f"can not load adam and wrong is {e}")
         else:
             print("Cannot find Adam weights so Adam is randomly initialized")

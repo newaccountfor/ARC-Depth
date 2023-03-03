@@ -36,7 +36,7 @@ class MonodepthOptions:
         self.parser.add_argument("--log_dir",
                                  type=str,
                                  help="log directory",
-                                 default="../model/only_pose")
+                                 default="../model/")
 
         # TRAINING options
         self.parser.add_argument("--model_name",
