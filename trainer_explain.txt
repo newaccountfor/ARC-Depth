@@ -1,1 +1,1 @@
-trainer1.py表示只有pose idea的训练函数  ===>  对应start2train1.sh  ===> 模型存储在 ../model/only_pose
+trainer_student.py表示只训练学生网络，包括第一阶段和第三阶段两个阶段

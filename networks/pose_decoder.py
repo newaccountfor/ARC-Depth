@@ -5,12 +5,10 @@ import torch.nn as nn
 from collections import OrderedDict
 
 
-""" class PoseDecoder(nn.Module):
+class PoseDecoder(nn.Module):
     def __init__(self, num_ch_enc, num_input_features, num_frames_to_predict_for=None, stride=1):
         super(PoseDecoder, self).__init__()
-        #num_ch_enc = [64,64,128,256,512]
-        #num_input_features = 1
-        #num_frames_to_predict_for = 2
+
         self.num_ch_enc = num_ch_enc
         self.num_input_features = num_input_features
 
@@ -32,7 +30,6 @@ from collections import OrderedDict
         #input_features is a list which just has a element but the element has 5 scales feature maps. 
         last_features = [f[-1] for f in input_features]#only collect last_feature?
         #so last_features only has a 512*6*20 feature map
-        #print(last_features[0].size())
         cat_features = [self.relu(self.convs["squeeze"](f)) for f in last_features]
         cat_features = torch.cat(cat_features,1)
         out = cat_features
@@ -47,12 +44,8 @@ from collections import OrderedDict
         #out.size = 12 * 2 * 1 * 6
         axisangle = out[..., :3]
         translation = out[..., 3:]
-        #print(axisangle.size())
-        #print(translation.size())
-        #input()
         return axisangle, translation
-        #return 2 tensors which size is 12 * 2 * 1 * 3  
-"""
+
 class PoseDecoder_for_t(nn.Module):
     def __init__(self, num_ch_enc, num_input_features, num_frames_to_predict_for=None, stride=1):
         super(PoseDecoder_for_t, self).__init__()

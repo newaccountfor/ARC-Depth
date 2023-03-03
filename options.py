@@ -10,9 +10,23 @@ class MonodepthOptions:
     def __init__(self):
         self.parser = argparse.ArgumentParser(description="Monodepthv2 options")
 
-        self.parser.add_argument("--train_which",
-                                type=int,
-                                help="which model to train, please ref to trainer_explain.txt",)
+        # ablation
+        
+        self.parser.add_argument("--pose_idea",
+                                 help="use pose idea",
+                                 action="store_true")
+        self.parser.add_argument("--reconstruction_idea",
+                                 help="use reconstruction_idea",
+                                 action="store_true")
+        self.parser.add_argument("--use_teacher",
+                                 help=" use teacher network",
+                                 action="store_true")
+        self.parser.add_argument("--teacher_model_path",
+                                 type=str,
+                                 help="teacher's model path, if use_teacher, must give this")
+        self.parser.add_argument("--student_model_input_of_disp_for_t",
+                                 type=str,
+                                 help="student model for generating input of teacher, if use_teacher, must give this")
         # PATHS
         self.parser.add_argument("--data_path",
                                  type=str,
@@ -42,7 +56,7 @@ class MonodepthOptions:
         self.parser.add_argument("--auto_prtrained_model",
                                  type=str,
                                  help="auto pretrained model",
-                                 default="/home/sba/wubiao/newidea-newbackbone/pretrained-model/autoencoder.pth",
+                                 default="/home/inspur/MAX_SPACE/yangli/pretrained-model/autoencoder.pth",
                                  )
      
         self.parser.add_argument("--dataset",

@@ -7,10 +7,10 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "1" # export VECLIB_MAXIMUM_THREADS=4
 os.environ["NUMEXPR_NUM_THREADS"] = "1" # export NUMEXPR_NUM_THREADS=6
 from options import MonodepthOptions
 
+from trainer_student import Trainer
 options = MonodepthOptions()
 opts = options.parse()
 
-if __name__ == "__main__" and opts.train_which == 1:
-    from trainer1 import Trainer
+if __name__ == "__main__":
     trainer = Trainer(opts)
     trainer.train()
