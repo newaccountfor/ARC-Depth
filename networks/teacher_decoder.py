@@ -32,7 +32,7 @@ class TeacherDecoder(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
 
-    def forward(self, input_features, frame_id=0):
+    def forward(self, input_features):
         self.outputs = {}
         _, _, _, _, econv5 = input_features
         # (64,64,128,256,512)*4
@@ -52,8 +52,8 @@ class TeacherDecoder(nn.Module):
         upconv1 = upsample(self.upconv1(iconv2))
         iconv1 = self.iconv1(upconv1)
 
-        self.outputs[("teacher_disp", frame_id, 3)] = self.sigmoid(self.disp4(iconv4))
-        self.outputs[("teacher_disp", frame_id, 2)] = self.sigmoid(self.disp3(iconv3))
-        self.outputs[("teacher_disp", frame_id, 1)] = self.sigmoid(self.disp2(iconv2))
-        self.outputs[("teacher_disp", frame_id, 0)] = self.sigmoid(self.disp1(iconv1))
+        self.outputs[("disp_t", 3)] = self.sigmoid(self.disp4(iconv4))
+        self.outputs[("disp_t", 2)] = self.sigmoid(self.disp3(iconv3))
+        self.outputs[("disp_t", 1)] = self.sigmoid(self.disp2(iconv2))
+        self.outputs[("disp_t", 0)] = self.sigmoid(self.disp1(iconv1))
         return self.outputs

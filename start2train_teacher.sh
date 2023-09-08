@@ -1,0 +1,2 @@
+
+python train_teacher.py --pose_idea --scheduler_step_size 14  --batch 10 --model_name teacher_pose --png --data_path ../datasets/ --student_model_input_of_disp_for_t /home/inspur/MAX_SPACE/yangli/pretrained-model/weights_5

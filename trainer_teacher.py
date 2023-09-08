@@ -7,22 +7,13 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import json
+import torch.nn.functional as F
 
 from utils import *
 from kitti_utils import *
 from layers import *
 import datasets
 import networks
-
-def build_extractor(pretrained_path):
-    extractor = networks.ResnetEncoder(50, None)
-    if pretrained_path is not None:
-        checkpoint = torch.load(pretrained_path, map_location='cpu')
-        for name, param in extractor.state_dict().items():
-            extractor.state_dict()[name].copy_(checkpoint['state_dict']['Encoder.' + name])
-        for param in extractor.parameters():
-            param.requires_grad = False
-    return extractor
 
 class Trainer:
     def __init__(self, options):
@@ -55,80 +46,53 @@ class Trainer:
         if self.opt.use_stereo:
             self.opt.frame_ids.append("s")
         
-        self.models["encoder"] = networks.test_hr_encoder.hrnet18(True)
-        self.models["encoder"].num_ch_enc = [ 64, 18, 36, 72, 144 ]
+        self.models["encoder_t"] = networks.ResnetEncoder(
+            50, self.opt.weights_init == "pretrained", num_input_images=4)
+        self.models["encoder_t"].to(self.device)
+        self.parameters_to_train += list(self.models["encoder_t"].parameters())
 
-        para_sum = sum(p.numel() for p in self.models['encoder'].parameters())
-        print('params in encoder',para_sum)
-        
-        self.models["depth"] = networks.HRDepthDecoder(
-            self.models["encoder"].num_ch_enc, self.opt.scales)
-        
-        # if use reconstruction idea, we use it
-        if self.opt.reconstruction_idea == True:
-            assert os.path.isfile(self.opt.auto_prtrained_model), "Please make sure model exists"
-            self.extractor = build_extractor(self.opt.auto_prtrained_model)
-            self.extractor.to(self.device)
+        self.models["depth_t"] = networks.TeacherDecoder(
+            self.models["encoder_t"].num_ch_enc, 1)
+        self.models["depth_t"].to(self.device)
+        self.parameters_to_train += list(self.models["depth_t"].parameters())
 
-        # if we use teacher to help student, we use it
-        if self.opt.use_teacher == True:
-            assert os.path.exists(self.opt.teacher_model_path), "Please make sure teacher model exists"
-            assert os.path.exists(self.opt.student_model_input_of_disp_for_t), "Please choose right student model for predict disp for teacher's input"
-            
-            # student net for help teacher
-            self.student_help_teacher_encoder = networks.test_hr_encoder.hrnet18(True)
-            self.student_help_teacher_encoder.num_ch_enc = [ 64, 18, 36, 72, 144 ]
-            self.student_help_teacher_decoder = networks.HRDepthDecoder(self.student_help_teacher_encoder.num_ch_enc, self.opt.scales)
-            
-            for model_type in ["encoder.pth", "depth.pth"]:
-                model_path = os.path.join(self.opt.student_model_input_of_disp_for_t, model_type)
-                pretrained_dict_for_student = torch.load(model_path)
-                
-                if model_type == "encoder.pth":
-                    enc_model_dict = self.student_help_teacher_encoder.state_dict()
-                    self.student_help_teacher_encoder.load_state_dict({k: v for k, v in pretrained_dict_for_student.items() if k in enc_model_dict})
-                    for param in self.student_help_teacher_encoder.parameters():
-                        param.requires_grad = False
-                    self.student_help_teacher_encoder.to(self.device)
-                else:
-                    dec_model_dict = self.student_help_teacher_decoder.state_dict()
-                    self.student_help_teacher_decoder.load_state_dict({k: v for k, v in pretrained_dict_for_student.items() if k in dec_model_dict})
-                    for param in self.student_help_teacher_decoder.parameters():
-                        param.requires_grad = False
-                    self.student_help_teacher_decoder.to(self.device)
+        para_sum = sum(p.numel() for p in self.models['encoder_t'].parameters())
+        print('params in encoder_teacher',para_sum)
 
-            # teacher network for help student
-            self.teacher_encoder = networks.ResnetEncoder(50, "pretrained", num_input_images=4)
-            self.teacher_decoder = networks.TeacherDecoder(self.teacher_encoder.num_ch_enc, 1)
-            for model_type in ["encoder_t.pth", "depth_t.pth"]:
-                model_path = os.path.join(self.opt.teacher_model_path, model_type)
-                pretrained_dict = torch.load(model_path)
-                if model_type == "encoder_t.pth":
-                    encoder_dict = self.teacher_encoder.state_dict()
-                    self.teacher_encoder.load_state_dict({k: v for k, v in pretrained_dict.items() if k in encoder_dict})
-                    for param in self.teacher_encoder.parameters():
-                        param.requires_grad = False
-                    self.teacher_encoder.to(self.device)
-                else:
-                    decoder_dict = self.teacher_decoder.state_dict()
-                    self.teacher_decoder.load_state_dict({k: v for k, v in pretrained_dict.items() if k in decoder_dict})
-                    for param in self.teacher_decoder.parameters():
-                        param.requires_grad = False
-                    self.teacher_decoder.to(self.device)
-
-
-        self.models["encoder"].to(self.device)
-        self.parameters_to_train += list(self.models["encoder"].parameters())
-        self.models["depth"].to(self.device)
-        self.parameters_to_train += list(self.models["depth"].parameters())
-        para_sum = sum(p.numel() for p in self.models['depth'].parameters())
+        para_sum = sum(p.numel() for p in self.models['depth_t'].parameters())
         print('params in depth decdoer',para_sum)
+
+
+        # student for help teacher training
+
+        self.student_help_teacher_encoder = networks.test_hr_encoder.hrnet18(True)
+        self.student_help_teacher_encoder.num_ch_enc = [ 64, 18, 36, 72, 144 ]
+        self.student_help_teacher_decoder = networks.HRDepthDecoder(self.student_help_teacher_encoder.num_ch_enc, self.opt.scales)
+        
+        for model_type in ["encoder.pth", "depth.pth"]:
+            model_path = os.path.join(self.opt.student_model_input_of_disp_for_t, model_type)
+            pretrained_dict_for_student = torch.load(model_path)
+            
+            if model_type == "encoder.pth":
+                # pretrained_dict_for_student = {k: v for k, v in pretrained_dict_for_student.items() if k in self.student_help_teacher_encoder}
+                enc_model_dict = self.student_help_teacher_encoder.state_dict()
+                self.student_help_teacher_encoder.load_state_dict({k: v for k, v in pretrained_dict_for_student.items() if k in enc_model_dict})
+                for param in self.student_help_teacher_encoder.parameters():
+                    param.requires_grad = False
+                self.student_help_teacher_encoder.to(self.device)
+            else:
+                # pretrained_dict_for_student = {k: v for k, v in pretrained_dict_for_student.items() if k in self.student_help_teacher_decoder}
+                dec_model_dict = self.student_help_teacher_decoder.state_dict()
+                self.student_help_teacher_decoder.load_state_dict({k: v for k, v in pretrained_dict_for_student.items() if k in dec_model_dict})
+                for param in self.student_help_teacher_decoder.parameters():
+                    param.requires_grad = False
+                self.student_help_teacher_decoder.to(self.device)
 
         if self.use_pose_net:  #use_pose_net = True
             if self.opt.pose_model_type == "separate_resnet":  #defualt=separate_resnet  choice = ['normal or shared']
                 
                 # Pose estimation's Encoder
-                self.models["pose_encoder"] = networks.ResnetEncoder(
+                self.models["pose_encoder_t"] = networks.ResnetEncoder(
                     self.opt.num_layers,
                     self.opt.weights_init == "pretrained",
                     num_input_images=self.num_pose_frames)#num_input_images=2
@@ -137,19 +101,19 @@ class Trainer:
                 if self.opt.pose_idea == True:
                     # Only output translation
                     self.models["pose_for_t"] = networks.PoseDecoder_for_t(
-                        self.models["pose_encoder"].num_ch_enc,
+                        self.models["pose_encoder_t"].num_ch_enc,
                         num_input_features=1,
                         num_frames_to_predict_for=2)
 
                     # only output rotation
                     self.models["pose_for_r"] = networks.PoseDecoder_for_r(
-                        self.models["pose_encoder"].num_ch_enc,
+                        self.models["pose_encoder_t"].num_ch_enc,
                         num_input_features=1,
                         num_frames_to_predict_for=2)
 
                 # Whether there is pose idea or not, pose for estimating R and T is required
                 self.models["pose"] = networks.PoseDecoder(
-                    self.models["pose_encoder"].num_ch_enc,
+                    self.models["pose_encoder_t"].num_ch_enc,
                         num_input_features=1,
                         num_frames_to_predict_for=2
                 )
@@ -160,18 +124,15 @@ class Trainer:
                 self.parameters_to_train += list(self.models["pose_for_t"].parameters())
                 self.parameters_to_train += list(self.models["pose_for_r"].parameters())
 
-            self.models["pose_encoder"].cuda()
+            self.models["pose_encoder_t"].cuda()
             self.models["pose"].cuda()
-            self.parameters_to_train += list(self.models["pose_encoder"].parameters())
+            self.parameters_to_train += list(self.models["pose_encoder_t"].parameters())
             self.parameters_to_train += list(self.models["pose"].parameters())
         
         self.model_optimizer = optim.Adam(self.parameters_to_train, self.opt.learning_rate) #learning_rate=1e-4
         #self.model_optimizer = optim.Adam(self.parameters_to_train, 0.5 * self.opt.learning_rate)#learning_rate=1e-4
         self.model_lr_scheduler = optim.lr_scheduler.StepLR(
             self.model_optimizer, self.opt.scheduler_step_size, 0.1)#defualt = 15'step size of the scheduler'
-
-        if self.opt.load_weights_folder is not None:
-            self.load_model()
 
         print("Training model named:\n  ", self.opt.model_name)
         print("Models and tensorboard events files are saved to:\n  ", self.log_path)
@@ -260,10 +221,7 @@ class Trainer:
         """Run the entire training pipeline
         """
         self.init_time = time.time()
-        if isinstance(self.opt.load_weights_folder, str):
-            self.epoch_start = int(self.opt.load_weights_folder[-1]) + 1
-        else:
-            self.epoch_start = 0
+        self.epoch_start = 0
         self.step = 0
         self.start_time = time.time()
         for self.epoch in range(self.opt.num_epochs - self.epoch_start):
@@ -328,21 +286,24 @@ class Trainer:
 
             outputs = self.models["depth"](features[0])
         else:
-            # Otherwise, we only feed the image with frame_id 0 through the depth encoder
-            features = self.models["encoder"](inputs[("color_aug", 0, 0)])
-            outputs = self.models["depth"](features)
+            # Otherwise, we first generate 3 disp images
+            source1 = inputs[("color_aug", -1, 0)]   # -1 frame
+            source0 = inputs[("color_aug", 0, 0)]    # 0 frame
+            source2 = inputs[("color_aug", 1, 0)]    # 1 frame
 
-            if self.opt.use_teacher == True:
-                source1 = inputs[("color_aug", -1, 0)]   # -1 frame
-                source0 = inputs[("color_aug", 0, 0)]    # 0 frame
-                source2 = inputs[("color_aug", 1, 0)]    # 1 frame
-                disp1_help_teacher = self.student_help_teacher_decoder(self.student_help_teacher_encoder(source1))
-                disp0_help_teacher = self.student_help_teacher_decoder(self.student_help_teacher_encoder(source0))
-                disp2_help_teacher = self.student_help_teacher_decoder(self.student_help_teacher_encoder(source2))
+            # disp1_help_teacher is a dict
+            disp1_help_teacher = self.student_help_teacher_decoder(self.student_help_teacher_encoder(source1))
+            disp0_help_teacher = self.student_help_teacher_decoder(self.student_help_teacher_encoder(source0))
+            disp2_help_teacher = self.student_help_teacher_decoder(self.student_help_teacher_encoder(source2))
 
-                # teacher outputs
-                teacher_input = torch.cat((source1, disp1_help_teacher[("disp", 0)], source0, disp0_help_teacher[("disp", 0)], source2, disp2_help_teacher[("disp", 0)]), 1)
-                outputs.update(self.teacher_decoder(self.teacher_encoder(teacher_input)))
+            # then fed then to teacher network
+            teacher_input = torch.cat((source1, disp1_help_teacher[("disp", 0)], source0, disp0_help_teacher[("disp", 0)], source2, disp2_help_teacher[("disp", 0)]), 1)
+
+            features = self.models["encoder_t"](teacher_input)
+            outputs = self.models["depth_t"](features)
+
+            # add student result to output dict to make selective supervised
+            outputs.update(disp0_help_teacher)
 
         if self.opt.predictive_mask:
             outputs["predictive_mask"] = self.models["predictive_mask"](features)
@@ -352,9 +313,6 @@ class Trainer:
             outputs.update(self.predict_poses(inputs, features))
 
         self.generate_images_pred(inputs, outputs)
-
-        if self.opt.reconstruction_idea == True:
-            self.generate_features_pred(inputs, outputs)
 
         losses = self.compute_losses(inputs, outputs)
 
@@ -390,7 +348,7 @@ class Trainer:
                         pose_inputs = [pose_feats[0], pose_feats[f_i]]
 
                     if self.opt.pose_model_type == "separate_resnet":
-                        pose_inputs = [self.models["pose_encoder"](torch.cat(pose_inputs, 1))]
+                        pose_inputs = [self.models["pose_encoder_t"](torch.cat(pose_inputs, 1))]
                     elif self.opt.pose_model_type == "posecnn":
                         pose_inputs = torch.cat(pose_inputs, 1)
 
@@ -488,25 +446,22 @@ class Trainer:
         Generated images are saved into the `outputs` dictionary.
         """
         for scale in self.opt.scales:
-            disp = outputs[("disp", scale)]
-            if self.opt.use_teacher == True:
-                disp_teacher = outputs[("disp_t", scale)]
+            disp_t = outputs[("disp_t", scale)]
+            disp_s = outputs[("disp", scale)]
             
             if self.opt.v1_multiscale:
                 source_scale = scale
             else:
-                disp = F.interpolate(
-                    disp, [self.opt.height, self.opt.width], mode="bilinear", align_corners=False)
+                disp_t = F.interpolate(
+                    disp_t, [self.opt.height, self.opt.width], mode="bilinear", align_corners=False)
+                disp_s = F.interpolate(
+                    disp_s, [self.opt.height, self.opt.width], mode="bilinear", align_corners=False)
                 source_scale = 0
-                if self.opt.use_teacher == True:
-                    disp_teacher = F.interpolate(
-                        disp_teacher, [self.opt.height, self.opt.width], mode="bilinear", align_corners=False)
 
-            _, depth = disp_to_depth(disp, self.opt.min_depth, self.opt.max_depth)#disp_to_depth function is in layers.py
-            if self.opt.use_teacher == True:
-                _, depth_teacher = disp_to_depth(disp_teacher, self.opt.min_depth, self.opt.max_depth)#disp_to_depth function is in layers.py
+            _, depth_s = disp_to_depth(disp_s, self.opt.min_depth, self.opt.max_depth)#disp_to_depth function is in layers.py
+            _, depth_t = disp_to_depth(disp_t, self.opt.min_depth, self.opt.max_depth)#disp_to_depth function is in layers.py
 
-            outputs[("depth", 0, scale)] = depth
+            outputs[("depth_t", 0, scale)] = depth_t
 
             for _, frame_id in enumerate(self.opt.frame_ids[1:]):
 
@@ -530,17 +485,16 @@ class Trainer:
                     T = transformation_from_parameters(
                         axisangle[:, 0], translation[:, 0] * mean_inv_depth[:, 0], frame_id < 0)
                 """
-                cam_points = self.backproject_depth[source_scale](
-                    depth, inputs[("inv_K", source_scale)])
+                cam_points_s = self.backproject_depth[source_scale](
+                    depth_s, inputs[("inv_K", source_scale)])
                 
-                if self.opt.use_teacher == True:
-                    teacher_cam_points = self.backproject_depth[source_scale](
-                        depth_teacher, inputs[("inv_K", source_scale)])
+                teacher_cam_points = self.backproject_depth[source_scale](
+                    depth_t, inputs[("inv_K", source_scale)])
                 
                 if self.opt.pose_idea == True:
                     # trasnlation
                     pix_coords_for_t = self.project_3d[source_scale](
-                        cam_points, inputs[("K", source_scale)], T_for_t)
+                        cam_points_s, inputs[("K", source_scale)], T_for_t)
 
                     outputs[("color_for_t", frame_id, scale)] = F.grid_sample(
                         inputs[("color", frame_id, source_scale)],
@@ -549,7 +503,7 @@ class Trainer:
 
                     # rotation
                     pix_coords_for_r = self.project_3d[source_scale](
-                        cam_points, inputs[("K", source_scale)], T_for_r)
+                        cam_points_s, inputs[("K", source_scale)], T_for_r)
 
                     outputs[("color_for_r", frame_id, scale)] = F.grid_sample(
                         inputs[("color", frame_id, source_scale)],
@@ -558,128 +512,65 @@ class Trainer:
 
                     # translation and rotation
                     pix_coords_r_and_t = self.project_3d[source_scale](
-                        cam_points, inputs[("K", source_scale)], T_r_and_t)
+                        cam_points_s, inputs[("K", source_scale)], T_r_and_t)
                     
                     outputs[("color_r_and_t", frame_id, scale)] = F.grid_sample(
                         inputs[("color", frame_id, source_scale)],
                         pix_coords_r_and_t,
                         padding_mode="border")
                     
-                    if self.opt.use_teacher == True:
-                        # trasnlation
-                        teacher_pix_coords_for_t = self.project_3d[source_scale](
-                            teacher_cam_points, inputs[("K", source_scale)], T_for_t)
+                    # teacher part
+                    # trasnlation
+                    teacher_pix_coords_for_t = self.project_3d[source_scale](
+                        teacher_cam_points, inputs[("K", source_scale)], T_for_t)
 
-                        outputs[("teacher_color_for_t", frame_id, scale)] = F.grid_sample(
-                            inputs[("color", frame_id, source_scale)],
-                            teacher_pix_coords_for_t,
-                            padding_mode="border")
+                    outputs[("teacher_color_for_t", frame_id, scale)] = F.grid_sample(
+                        inputs[("color", frame_id, source_scale)],
+                        teacher_pix_coords_for_t,
+                        padding_mode="border")
 
-                        # rotation
-                        teacher_pix_coords_for_r = self.project_3d[source_scale](
-                            teacher_cam_points, inputs[("K", source_scale)], T_for_r)
+                    # rotation
+                    teacher_pix_coords_for_r = self.project_3d[source_scale](
+                        teacher_cam_points, inputs[("K", source_scale)], T_for_r)
 
-                        outputs[("teacher_color_for_r", frame_id, scale)] = F.grid_sample(
-                            inputs[("color", frame_id, source_scale)],
-                            teacher_pix_coords_for_r,
-                            padding_mode="border")
+                    outputs[("teacher_color_for_r", frame_id, scale)] = F.grid_sample(
+                        inputs[("color", frame_id, source_scale)],
+                        teacher_pix_coords_for_r,
+                        padding_mode="border")
 
-                        # translation and rotation
-                        teacher_pix_coords_r_and_t = self.project_3d[source_scale](
-                            teacher_cam_points, inputs[("K", source_scale)], T_r_and_t)
+                    # translation and rotation
+                    teacher_pix_coords_r_and_t = self.project_3d[source_scale](
+                        teacher_cam_points, inputs[("K", source_scale)], T_r_and_t)
 
-                        outputs[("teacher_color_r_and_t", frame_id, scale)] = F.grid_sample(
-                            inputs[("color", frame_id, source_scale)],
-                            teacher_pix_coords_r_and_t,
-                            padding_mode="border")
+                    outputs[("teacher_color_r_and_t", frame_id, scale)] = F.grid_sample(
+                        inputs[("color", frame_id, source_scale)],
+                        teacher_pix_coords_r_and_t,
+                        padding_mode="border")
 
                 
                 pix_coords = self.project_3d[source_scale](
-                        cam_points, inputs[("K", source_scale)], T)
+                        cam_points_s, inputs[("K", source_scale)], T)
 
                 outputs[("color", frame_id, scale)] = F.grid_sample(
                     inputs[("color", frame_id, source_scale)],
                     pix_coords,
                     padding_mode="border")
 
-                if self.opt.use_teacher == True:
-                    teacher_pix_coords = self.project_3d[source_scale](
-                        teacher_cam_points, inputs[("K", source_scale)], T)
+                teacher_pix_coords = self.project_3d[source_scale](
+                    teacher_cam_points, inputs[("K", source_scale)], T)
 
-                    outputs[("teacher_color", frame_id, scale)] = F.grid_sample(
-                        inputs[("color", frame_id, source_scale)],
-                        teacher_pix_coords,
-                        padding_mode="border")
+                outputs[("teacher_color", frame_id, scale)] = F.grid_sample(
+                    inputs[("color", frame_id, source_scale)],
+                    teacher_pix_coords,
+                    padding_mode="border")
                     
                 if not self.opt.disable_automasking:
                     #doing this
                     outputs[("color_identity", frame_id, scale)] = inputs[("color", frame_id, source_scale)]
 
-    def generate_features_pred(self, inputs, outputs):
-        # get feature first
-        if self.opt.get_f_first == False:
-            for _, frame_id in enumerate(self.opt.frame_ids[1:]):
-                if self.opt.pose_idea == True:
-                    img =  outputs[("color", frame_id, 0)]
-                    img_for_t = outputs[("color_for_t", frame_id, 0)]
-                    img_for_r = outputs[("color_for_r", frame_id, 0)]
-                    img_for_r_and_t = outputs[("color_r_and_t", frame_id, 0)]
-
-                    outputs[("feature_for_t", frame_id, 0)] = self.extractor(img_for_t)[0]
-                    outputs[("feature_for_r", frame_id, 0)] = self.extractor(img_for_r)[0]
-                    outputs[("feature_r_and_t", frame_id, 0)] = self.extractor(img_for_r_and_t)[0]
-
-                img = outputs[("color", frame_id, 0)]
-                outputs[("feature", frame_id, 0)] = self.extractor(img)[0]
-        else:
-            disp = outputs[("disp", 0)]
-            disp = F.interpolate(disp, [int(self.opt.height/2), int(self.opt.width/2)], mode="bilinear", align_corners=False)
-            _, depth = disp_to_depth(disp, self.opt.min_depth, self.opt.max_depth)
-            for i, frame_id in enumerate(self.opt.frame_ids[1:]):
-                if frame_id == "s":
-                    T = inputs["stereo_T"]
-                else:
-                    T = outputs[("cam_T_cam", 0, frame_id)]
-                    if self.opt.pose_idea == True:
-                        T_only_t = outputs[("cam_T_cam_for_t", 0, frame_id)]
-                        T_r_and_t = outputs[("cam_T_cam_r_and_t", 0, frame_id)]
-                        T_only_r = outputs[("cam_T_cam_for_r", 0, frame_id)]
-
-                K = inputs[("K", 0)].clone()
-                K[:, 0, :] /= 2
-                K[:, 1, :] /= 2
-
-                inv_K = torch.zeros_like(K)
-                for i in range(inv_K.shape[0]):
-                    inv_K[i, :, :] = torch.pinverse(K[i, :, :])
-
-                cam_points = self.backproject_feature(depth, inv_K)
-                pix_coords = self.project_feature(cam_points, K, T)  # [b,h,w,2]
-
-                img = inputs[("color", frame_id, 0)]
-                src_f = self.extractor(img)[0]
-                outputs[("feature", frame_id, 0)] = F.grid_sample(src_f, pix_coords, padding_mode="border")
-
-                if self.opt.pose_idea == True:
-                    # only t
-                    pix_coords_only_t = self.project_feature(cam_points, K, T_only_t)  # [b,h,w,2]
-                    outputs[("feature_for_t", frame_id, 0)] = F.grid_sample(src_f, pix_coords_only_t, padding_mode="border")
-
-                    # only r
-                    pix_coords_only_r = self.project_feature(cam_points, K, T_only_r)  # [b,h,w,2]
-                    outputs[("feature_for_r", frame_id, 0)] = F.grid_sample(src_f, pix_coords_only_r, padding_mode="border")
-
-                    # t and r
-                    pix_coords_r_and_t = self.project_feature(cam_points, K, T_r_and_t)  # [b,h,w,2]
-                    outputs[("feature_r_and_t", frame_id, 0)] = F.grid_sample(src_f, pix_coords_r_and_t, padding_mode="border")
-
     def robust_l1(self, pred, target):
         eps = 1e-3
         return torch.sqrt(torch.pow(target - pred, 2) + eps ** 2)
-    
-    def compute_perceptional_loss(self, tgt_f, src_f):
-        loss = self.robust_l1(tgt_f, src_f).mean(1, True)
-        return loss
     
     def compute_reprojection_loss(self, pred, target):
         """Computes reprojection loss between a batch of predicted and target images
@@ -706,8 +597,6 @@ class Trainer:
             loss = 0
             reprojection_losses = []
             reprojection_losses_teacher = []
-            if self.opt.reconstruction_idea == True:
-                perceptional_losses = []
 
             if self.opt.v1_multiscale:
                 source_scale = scale
@@ -715,8 +604,7 @@ class Trainer:
                 source_scale = 0
 
             disp = outputs[("disp", scale)]
-            if self.opt.use_teacher == True:
-                disp_teacher = outputs[("disp_t", scale)]
+            disp_teacher = outputs[("disp_t", scale)]
             color = inputs[("color", 0, scale)]
             target = inputs[("color", 0, source_scale)]
 
@@ -732,65 +620,32 @@ class Trainer:
                     loss_pred_r_and_t = self.compute_reprojection_loss(pred_r_and_t, target)
                     loss_pred_for_r = self.compute_reprojection_loss(pred_for_r, target)
 
-                    if self.opt.use_teacher == True:
-                        teacher_pred_for_t = outputs[("teacher_color_for_t", frame_id, scale)]
-                        teacher_pred_r_and_t = outputs[("teacher_color_r_and_t", frame_id, scale)]
-                        teacher_pred_for_r = outputs[("teacher_color_for_r", frame_id, scale)] 
+                teacher_pred_for_t = outputs[("teacher_color_for_t", frame_id, scale)]
+                teacher_pred_r_and_t = outputs[("teacher_color_r_and_t", frame_id, scale)]
+                teacher_pred_for_r = outputs[("teacher_color_for_r", frame_id, scale)] 
 
-                        teacher_loss_pred_for_t = self.compute_reprojection_loss(teacher_pred_for_t, target)
-                        teacher_loss_pred_r_and_t = self.compute_reprojection_loss(teacher_pred_r_and_t, target)
-                        teacher_loss_pred_for_r = self.compute_reprojection_loss(teacher_pred_for_r, target)
+                teacher_loss_pred_for_t = self.compute_reprojection_loss(teacher_pred_for_t, target)
+                teacher_loss_pred_r_and_t = self.compute_reprojection_loss(teacher_pred_r_and_t, target)
+                teacher_loss_pred_for_r = self.compute_reprojection_loss(teacher_pred_for_r, target)
 
                 pred = outputs[("color", frame_id, scale)]
                 loss_pred = self.compute_reprojection_loss(pred, target)
-                if self.opt.use_teacher == True:
-                    teacher_pred = outputs[("teacher_color", frame_id, scale)]
-                    teacher_loss_pred = self.compute_reprojection_loss(teacher_pred, target)
+                    
+                teacher_pred = outputs[("teacher_color", frame_id, scale)]
+                teacher_loss_pred = self.compute_reprojection_loss(teacher_pred, target)
                 
                 if self.opt.pose_idea == True:
-                    final, _ = torch.min(torch.cat((loss_pred, loss_pred_for_t, loss_pred_r_and_t, loss_pred_for_r), 1), 1, True)
-                    if self.opt.use_teacher == True:
-                        final_t, _ = torch.min(torch.cat((teacher_loss_pred, teacher_loss_pred_for_t, teacher_loss_pred_r_and_t, teacher_loss_pred_for_r), 1), 1, True)
+                    final_t, _ = torch.min(torch.cat((teacher_loss_pred, teacher_loss_pred_for_t, teacher_loss_pred_r_and_t, teacher_loss_pred_for_r), 1), 1, True)
+                    final_s, _ = torch.min(torch.cat((loss_pred, loss_pred_for_t, loss_pred_r_and_t, loss_pred_for_r), 1), 1, True)
                 else:
-                    final = loss_pred
-                    if self.opt.use_teacher == True:
-                        final_t = teacher_loss_pred
+                    final_t = teacher_loss_pred
+                    final_s = loss_pred
 
-                reprojection_losses.append(final)
-                if self.opt.use_teacher == True:
-                    reprojection_losses_teacher.append(final_t)
-            
-            if self.opt.use_teacher == True:
-                reprojection_losses_teacher = torch.cat(reprojection_losses_teacher, 1)
+                reprojection_losses.append(final_s)
+                reprojection_losses_teacher.append(final_t)
+
             reprojection_losses = torch.cat(reprojection_losses, 1)
-
-            if self.opt.reconstruction_idea == True:
-                # mini perceptional loss
-                for frame_id in self.opt.frame_ids[1:]:
-                    tgt_f = self.extractor(inputs[("color", 0, 0)])[0]
-
-                    if self.opt.pose_idea == True:
-                        scr_f_for_t = outputs[("feature_for_t", frame_id, 0)]
-                        scr_f_for_r = outputs[("feature_for_r", frame_id, 0)]
-                        scr_f_r_and_t = outputs[("feature_r_and_t", frame_id, 0)]
-
-                        loss_perceptional_for_t = self.compute_perceptional_loss(tgt_f, scr_f_for_t)
-                        loss_perceptional_for_r = self.compute_perceptional_loss(tgt_f, scr_f_for_r)
-                        loss_perceptional_r_and_t = self.compute_perceptional_loss(tgt_f, scr_f_r_and_t)
-
-                    src_f = outputs[("feature", frame_id, 0)]
-                    loss_perceptional = self.compute_perceptional_loss(tgt_f, src_f)
-                    
-                    if self.opt.pose_idea == True:
-                        final, _ = torch.min(torch.cat((loss_perceptional, loss_perceptional_for_t, loss_perceptional_for_r, loss_perceptional_r_and_t), 1), 1, True)
-                    else:
-                        final = loss_perceptional
-                    perceptional_losses.append(final)
-
-                perceptional_loss = torch.cat(perceptional_losses, 1)
-                min_perceptional_loss, _ = torch.min(perceptional_loss, dim=1)
-                loss += self.opt.perception_weight * min_perceptional_loss.mean()
-
+            reprojection_losses_teacher = torch.cat(reprojection_losses_teacher, 1)
 
             if not self.opt.disable_automasking:
                 #doing this 
@@ -806,7 +661,6 @@ class Trainer:
                 else:
                     # save both images, and do min all at once below
                     identity_reprojection_loss = identity_reprojection_losses
-                    identity_reprojection_loss_t = identity_reprojection_losses
 
             elif self.opt.predictive_mask:
                 mask = outputs["predictive_mask"]["disp", scale]
@@ -827,8 +681,7 @@ class Trainer:
             else:
                 #doing_this
                 reprojection_loss = reprojection_losses
-                if self.opt.use_teacher == True:
-                    reprojection_loss_teacher = reprojection_losses_teacher
+                reprojection_loss_teacher = reprojection_losses_teacher
 
             if not self.opt.disable_automasking:
                 #doing_this
@@ -836,27 +689,21 @@ class Trainer:
                     #identity_reprojection_loss.shape).cuda() * 0.00001
                 if torch.cuda.is_available():
                     identity_reprojection_loss += torch.randn(identity_reprojection_loss.shape).cuda() * 0.00001
-                    if self.opt.use_teacher == True:
-                        identity_reprojection_loss_t += torch.randn(identity_reprojection_loss.shape).cuda() * 0.00001
                 else:
                     identity_reprojection_loss += torch.randn(identity_reprojection_loss.shape).cpu() * 0.00001
-                    if self.opt.use_teacher == True:
-                        identity_reprojection_loss_t += torch.randn(identity_reprojection_loss.shape).cuda() * 0.00001
                 combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)
-                if self.opt.use_teacher == True:
-                    combined_t = torch.cat((identity_reprojection_loss_t, reprojection_loss_teacher), dim=1)
+                combined_t = torch.cat((identity_reprojection_loss, reprojection_loss_teacher), dim=1)
             else:
                 combined = reprojection_loss
+                combined_t = reprojection_loss_teacher
 
             if combined.shape[1] == 1:
                 to_optimise = combined
-                if self.opt.use_teacher == True:
-                    to_optimise_t = combined_t
+                to_optimise_t = combined_t
             else:
                 #doing this
                 to_optimise, idxs = torch.min(combined, dim=1)
-                if self.opt.use_teacher == True:
-                    to_optimise_t, idxs = torch.min(combined_t, dim=1)
+                to_optimise_t, idxs_t = torch.min(combined_t, dim=1)
             if not self.opt.disable_automasking:
                 #outputs["identity_selection/{}".format(scale)] = (
                 outputs["identity_selection/{}".format(0)] = (
@@ -868,28 +715,24 @@ class Trainer:
             smooth_loss = get_smooth_loss(norm_disp, color)
 
             loss += self.opt.disparity_smoothness * smooth_loss / (2 ** scale)#defualt=1e-3 something with get_smooth_loss function
-
-            if self.opt.use_teacher == True:
-                # teacher help student in depth estimation
-                if scale == 0:
-                    selective_help = to_optimise_t < to_optimise
-                    multiply_result = selective_help * torch.abs(disp - disp_teacher) * self.opt.selective_help_rate
-                    loss += torch.mean(multiply_result) * (2 ** scale)
-                    teacher_part = selective_help * to_optimise_t * (2 ** scale)
-                    student_part = (~selective_help) * to_optimise
-                    two_part = teacher_part + student_part
-                    loss += two_part.mean()
-                else:
-                    disp_res = torch.abs(disp - disp_teacher) 
-                    loss += torch.mean(disp_res) * (2 ** scale)
-                    loss += to_optimise.mean()
-                
-            else:
-                loss += to_optimise.mean()
             
+
+            disp = F.interpolate(disp, scale_factor=2 ** scale, mode="nearest")
+            disp_teacher = F.interpolate(disp_teacher, scale_factor=2 ** scale, mode="nearest")
+            
+            selective_help = to_optimise < to_optimise_t
+            multiply_result = selective_help * torch.abs(disp - disp_teacher)
+            loss += torch.mean(multiply_result) * (2 ** scale)
+            
+            student_part = selective_help * to_optimise * (2 ** scale)
+            teacher_part = (~selective_help) * to_optimise_t
+            two_part = student_part + teacher_part
+            loss += two_part.mean()
+
+
             total_loss += loss
             losses["loss/{}".format(scale)] = loss
-        
+
         total_loss /= self.num_scales
         losses["loss"] = total_loss 
         return losses

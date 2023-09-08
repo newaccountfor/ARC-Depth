@@ -15,18 +15,7 @@ class MonodepthOptions:
         self.parser.add_argument("--pose_idea",
                                  help="use pose idea",
                                  action="store_true")
-        self.parser.add_argument("--reconstruction_idea",
-                                 help="use reconstruction_idea",
-                                 action="store_true")
-        self.parser.add_argument("--get_f_first",
-                                 help="whether getting feature first or not",
-                                 action="store_true")
-        self.parser.add_argument("--use_teacher",
-                                 help=" use teacher network",
-                                 action="store_true")
-        self.parser.add_argument("--teacher_model_path",
-                                 type=str,
-                                 help="teacher's model path, if use_teacher, must give this")
+
         self.parser.add_argument("--student_model_input_of_disp_for_t",
                                  type=str,
                                  help="student model for generating input of teacher, if use_teacher, must give this")
@@ -59,7 +48,7 @@ class MonodepthOptions:
         self.parser.add_argument("--auto_prtrained_model",
                                  type=str,
                                  help="auto pretrained model",
-                                 default="/home/sdb1/ouyuxiang/pretrained-model/autoencoder.pth"
+                                 default="/home/inspur/MAX_SPACE/yangli/pretrained-model/autoencoder.pth",
                                  )
      
         self.parser.add_argument("--dataset",
@@ -81,7 +70,7 @@ class MonodepthOptions:
         self.parser.add_argument("--perception_weight",
                                  type=float,
                                  help="perception weight",
-                                 default=2e-4)
+                                 default=1e-3)
         self.parser.add_argument("--disparity_smoothness",
                                  type=float,
                                  help="disparity smoothness weight",
@@ -90,10 +79,6 @@ class MonodepthOptions:
                                  type=float,
                                  help="pose loss weight",
                                  default=1e-2)
-        self.parser.add_argument("--selective_help_rate",
-                                 type=float,
-                                 help="teacher loss weight",
-                                 default=1e-1)          
         self.parser.add_argument("--scales",
                                  nargs="+",
                                  type=int,
@@ -176,15 +161,17 @@ class MonodepthOptions:
                                  default=12)
 
         # LOADING options
-        self.parser.add_argument("--load_weights_folder",
-                                 type=str,
-                                 help="name of model to load")
         self.parser.add_argument("--models_to_load",
                                  nargs="+",
                                  type=str,
                                  help="models to load",
                                  default=["encoder", "depth", "pose_encoder", "pose"])
-
+        self.parser.add_argument("--load_weights_folder",
+                                 type=str,
+                                 help="name of model to load")
+        self.parser.add_argument("--load_weights_folder_teacher",
+                                 type=str,
+                                 help="name of model to load")
         # LOGGING options
         self.parser.add_argument("--log_frequency",
                                  type=int,

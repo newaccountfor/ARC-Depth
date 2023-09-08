@@ -3,7 +3,7 @@ import torch
 import logging
 import torch.nn as nn
 import torch.nn.functional as F
-#from torchvision.models.utils import load_state_dict_from_url
+from torchvision.models.utils import load_state_dict_from_url
 #from torch.hub import load_state_dict_from_url
 import matplotlib.pyplot as plt
 logger = logging.getLogger('hrnet_backbone')
@@ -11,18 +11,18 @@ logger = logging.getLogger('hrnet_backbone')
 __all__ = ['hrnet18', 'hrnet32', 'hrnet48','hrnet64']
 
 
-# model_urls = {
-#     'hrnet18_imagenet': 'https://opr0mq.dm.files.1drv.com/y4mIoWpP2n-LUohHHANpC0jrOixm1FZgO2OsUtP2DwIozH5RsoYVyv_De5wDgR6XuQmirMV3C0AljLeB-zQXevfLlnQpcNeJlT9Q8LwNYDwh3TsECkMTWXCUn3vDGJWpCxQcQWKONr5VQWO1hLEKPeJbbSZ6tgbWwJHgHF7592HY7ilmGe39o5BhHz7P9QqMYLBts6V7QGoaKrr0PL3wvvR4w',
-#     'hrnet32_imagenet': 'https://opr74a.dm.files.1drv.com/y4mKOuRSNGQQlp6wm_a9bF-UEQwp6a10xFCLhm4bqjDu6aSNW9yhDRM7qyx0vK0WTh42gEaniUVm3h7pg0H-W0yJff5qQtoAX7Zze4vOsqjoIthp-FW3nlfMD0-gcJi8IiVrMWqVOw2N3MbCud6uQQrTaEAvAdNjtjMpym1JghN-F060rSQKmgtq5R-wJe185IyW4-_c5_ItbhYpCyLxdqdEQ',
-#     'hrnet48_imagenet': 'https://optgaw.dm.files.1drv.com/y4mWNpya38VArcDInoPaL7GfPMgcop92G6YRkabO1QTSWkCbo7djk8BFZ6LK_KHHIYE8wqeSAChU58NVFOZEvqFaoz392OgcyBrq_f8XGkusQep_oQsuQ7DPQCUrdLwyze_NlsyDGWot0L9agkQ-M_SfNr10ETlCF5R7BdKDZdupmcMXZc-IE3Ysw1bVHdOH4l-XEbEKFAi6ivPUbeqlYkRMQ',
-#     'hrnet48_cityscapes': 'https://optgaw.dm.files.1drv.com/y4mWNpya38VArcDInoPaL7GfPMgcop92G6YRkabO1QTSWkCbo7djk8BFZ6LK_KHHIYE8wqeSAChU58NVFOZEvqFaoz392OgcyBrq_f8XGkusQep_oQsuQ7DPQCUrdLwyze_NlsyDGWot0L9agkQ-M_SfNr10ETlCF5R7BdKDZdupmcMXZc-IE3Ysw1bVHdOH4l-XEbEKFAi6ivPUbeqlYkRMQ',
-# }
-model_path = {
-    'hrnet18_imagenet': '/home/inspur/MAX_SPACE/yangli/pretrained-model/hrnetv2_w18_imagenet_pretrained.pth',
-    'hrnet32_imagenet': '/home/inspur/MAX_SPACE/yangli/pretrained-model/hrnetv2_w32_imagenet_pretrained.pth',
-    'hrnet48_imagenet': '/home/inspur/MAX_SPACE/yangli/pretrained-model/hrnetv2_w48_imagenet_pretrained.pth',
-    'hrnet48_cityscapes': '/home/inspur/MAX_SPACE/yangli/pretrained-model/hrnetv2_w48_imagenet_pretrained (1).pth'
+model_urls = {
+    'hrnet18_imagenet': 'https://opr0mq.dm.files.1drv.com/y4mIoWpP2n-LUohHHANpC0jrOixm1FZgO2OsUtP2DwIozH5RsoYVyv_De5wDgR6XuQmirMV3C0AljLeB-zQXevfLlnQpcNeJlT9Q8LwNYDwh3TsECkMTWXCUn3vDGJWpCxQcQWKONr5VQWO1hLEKPeJbbSZ6tgbWwJHgHF7592HY7ilmGe39o5BhHz7P9QqMYLBts6V7QGoaKrr0PL3wvvR4w',
+    'hrnet32_imagenet': 'https://opr74a.dm.files.1drv.com/y4mKOuRSNGQQlp6wm_a9bF-UEQwp6a10xFCLhm4bqjDu6aSNW9yhDRM7qyx0vK0WTh42gEaniUVm3h7pg0H-W0yJff5qQtoAX7Zze4vOsqjoIthp-FW3nlfMD0-gcJi8IiVrMWqVOw2N3MbCud6uQQrTaEAvAdNjtjMpym1JghN-F060rSQKmgtq5R-wJe185IyW4-_c5_ItbhYpCyLxdqdEQ',
+    'hrnet48_imagenet': 'https://optgaw.dm.files.1drv.com/y4mWNpya38VArcDInoPaL7GfPMgcop92G6YRkabO1QTSWkCbo7djk8BFZ6LK_KHHIYE8wqeSAChU58NVFOZEvqFaoz392OgcyBrq_f8XGkusQep_oQsuQ7DPQCUrdLwyze_NlsyDGWot0L9agkQ-M_SfNr10ETlCF5R7BdKDZdupmcMXZc-IE3Ysw1bVHdOH4l-XEbEKFAi6ivPUbeqlYkRMQ',
+    'hrnet48_cityscapes': 'https://optgaw.dm.files.1drv.com/y4mWNpya38VArcDInoPaL7GfPMgcop92G6YRkabO1QTSWkCbo7djk8BFZ6LK_KHHIYE8wqeSAChU58NVFOZEvqFaoz392OgcyBrq_f8XGkusQep_oQsuQ7DPQCUrdLwyze_NlsyDGWot0L9agkQ-M_SfNr10ETlCF5R7BdKDZdupmcMXZc-IE3Ysw1bVHdOH4l-XEbEKFAi6ivPUbeqlYkRMQ',
 }
+# model_path = {
+#     'hrnet18_imagenet': '/home/sdb1/ouyuxiang/pretrained-model/hrnetv2_w18_imagenet_pretrained.pth',
+#     'hrnet32_imagenet': '/home/sdb1/ouyuxiang/pretrained-model/hrnetv2_w32_imagenet_pretrained.pth',
+#     'hrnet48_imagenet': '/home/sdb1/ouyuxiang/pretrained-model/hrnetv2_w48_imagenet_pretrained.pth',
+#     'hrnet48_cityscapes': '/home/sdb1/ouyuxiang/pretrained-model/hrnetv2_w48_imagenet_pretrained (1).pth'
+# }
 
 def visual_feature(features):
     for a in range(len(features)):
@@ -509,10 +509,11 @@ def _hrnet(arch, pretrained, progress, **kwargs):
     if pretrained:
         if arch == 'hrnet64':
             arch = 'hrnet32_imagenet'
-            pretrained_path = model_path[arch]
-            loaded_state_dict = torch.load(pretrained_path)
-            # loaded_state_dict = load_state_dict_from_url(model_url,
-            #                                       progress=progress)
+            model_url = model_urls[arch]
+            #pretrained_path = model_path[arch]
+            #loaded_state_dict = torch.load(pretrained_path)
+            loaded_state_dict = load_state_dict_from_url(model_url,
+                                                  progress=progress)
             #add weights demention to adopt input change
             exp_layers = ['conv1.weight', 'bn1.weight', 'bn1.bias', 'bn1.running_mean', 'bn1.running_var', 'conv2.weight', 'bn2.weight', 'bn2.bias', 'bn2.running_mean', 'bn2.running_var']
             lista = ['transition1.0.0.weight', 'transition1.1.0.0.weight', 'transition2.2.0.0.weight', 'transition3.3.0.0.weight']
@@ -544,11 +545,11 @@ def _hrnet(arch, pretrained, progress, **kwargs):
                     #  loaded_state_dict[k] = torch.cat([v] * 2, 1) / 2
         else:
             arch = arch + '_imagenet'
-            #model_url = model_urls[arch]
-            pretrained_path = model_path[arch]
-            # loaded_state_dict = load_state_dict_from_url(model_url,
-            #                                       progress=progress)
-            loaded_state_dict = torch.load(pretrained_path)
+            model_url = model_urls[arch]
+            #pretrained_path = model_path[arch]
+            loaded_state_dict = load_state_dict_from_url(model_url,
+                                                  progress=progress)
+            #loaded_state_dict = torch.load(pretrained_path)
         #if k == 'conv1.weight':
         #    loaded_state_dict[k] = torch.cat([v] * 2, 1) / 2
                    

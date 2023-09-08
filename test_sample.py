@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+import cv2
 import os
 import sys
 import glob
@@ -8,7 +9,7 @@ import numpy as np
 import PIL.Image as pil
 import matplotlib as mpl
 import matplotlib.cm as cm
-
+import time
 import torch
 from torchvision import transforms, datasets
 from cv2 import imwrite
@@ -28,6 +29,7 @@ def parse_args():
                         help='path to a test image or folder of images', required=True)
     parser.add_argument('--model_folder',type = str,
                         help='the folder name of model')
+    # parser.add_argument('--model_folder_teacher', type=str, help="model_folder_teacher")
     parser.add_argument('--model_name',type = str)
     parser.add_argument('--data_path',type = str)
     '''parser.add_argument('--model_name', type=str,
@@ -79,6 +81,28 @@ def test_simple(args):
     encoder.load_state_dict(filtered_dict_enc)
     encoder.to(device)
     encoder.eval()
+
+
+    # teacher network
+    # encoder_teacher_path = os.path.join(args.load_weights_folder_teacher, "encoder_t.pth")
+    # decoder_teacher_path = os.path.join(args.load_weights_folder_teacher, "depth_t.pth")
+    # encoder_teacher_dict = torch.load(encoder_teacher_path) if torch.cuda.is_available() else torch.load(encoder_teacher_path,map_location = 'cpu')
+    # decoder_teacher_dict = torch.load(decoder_teacher_path) if torch.cuda.is_available() else torch.load(decoder_teacher_path,map_location = 'cpu')
+    
+    # encoder_teacher = networks.ResnetEncoder(50, "pretrained", num_input_images=4)
+    # decoder_teacher = networks.TeacherDecoder(encoder_teacher.num_ch_enc, 1)
+
+    # model_dict_teacher = encoder_teacher.state_dict()
+    # dec_model_dict_teacher = decoder_teacher.state_dict()
+    # encoder_teacher.load_state_dict({k: v for k, v in encoder_teacher_dict.items() if k in model_dict_teacher})
+    # decoder_teacher.load_state_dict({k: v for k, v in decoder_teacher_dict.items() if k in dec_model_dict_teacher})
+
+    # encoder_teacher.cuda() if torch.cuda.is_available() else encoder_teacher.cpu()
+    # encoder_teacher.eval()
+
+    # decoder_teacher.cuda() if torch.cuda.is_available() else decoder_teacher.cpu()
+    # decoder_teacher.eval()
+
     para_sum_encoder = sum(p.numel() for p in encoder.parameters())
     
     print("   Loading pretrained decoder")
@@ -87,6 +111,7 @@ def test_simple(args):
     loaded_dict = torch.load(depth_decoder_path, map_location=device)
     depth_decoder.load_state_dict(loaded_dict)
 
+    timing = 0.0
     para_sum_decoder = sum(p.numel() for p in depth_decoder.parameters())
     depth_decoder.to(device)
     depth_decoder.eval()
@@ -122,6 +147,7 @@ def test_simple(args):
             image_path = os.path.join(args.data_path, image_path).rstrip('\n')
             input_image = pil.open(image_path).convert('RGB')
             image_name =  "-".join(image_path.split('/')[5:]).rstrip(".png")
+            image_names = image_path.split('/')[6]
             rgb = transforms.ToTensor()(input_image)
             
             original_width, original_height = input_image.size
@@ -136,8 +162,12 @@ def test_simple(args):
             
             rgb1 = rgb.permute(1,2,0).detach().cpu().numpy() * 255
             
+            
             features = encoder(input_image)
+            start_time = time.time()
             outputs = depth_decoder(features)
+            end_time = time.time()
+            timing += end_time - start_time
 
             disp = outputs[("disp", 0)]
             #disp_resized = disp
@@ -151,14 +181,82 @@ def test_simple(args):
             scaled_disp, depth_resized = disp_to_depth(disp, 0.1, 100)
             # np.save(name_dest_npy, scaled_disp.cpu().numpy())
 
+            depth_resized = torch.nn.functional.interpolate(
+                depth_resized, (original_height, original_width), mode="bilinear", align_corners=False)
             # Saving colormapped depth image
             disp_resized_np = disp_resized.squeeze().cpu().numpy()
-            print(disp_resized_np.shape)
+            depth_resized_np = depth_resized.squeeze().cpu().numpy()
+
+            
+            gt_dir = "/home/sdb1/ouyuxiang/biaobiaobiao/gt_new"
+            #save_path ="/home/sdb1/ouyuxiang/biaobiaobiao/other_depth/monodepth2-master/monodepth2_result_new"
+            #save_path = "/home/sdb1/ouyuxiang/biaobiaobiao/other_depth/results/featdepth"
+            gt_path = os.path.join(gt_dir, image_names)
+            gt = cv2.imread(gt_path,0)
+            #gt = cv2.resize(gt, (640,192))
+            #gt_tensor = torch.tensor(gt).float().cuda()
+            #gt_depth = gt_tensor.cpu().numpy().squeeze()
+
+            MIN_DEPTH = 1e-3
+            MAX_DEPTH = 80
+            gt_height, gt_width = gt.shape[:2]
+            mask = np.logical_and(gt > MIN_DEPTH, gt < MAX_DEPTH)
+
+            crop = np.array([0.40810811 * gt_height, 0.99189189 * gt_height,
+                             0.03594771 * gt_width,  0.96405229 * gt_width]).astype(np.int32)
+            crop_mask = np.zeros(mask.shape)
+            crop_mask[crop[0]:crop[1], crop[2]:crop[3]] = 1
+            mask = np.logical_and(mask, crop_mask)
+
+            #print(depth_resized_np.shape)
+
+            depth_resized_np_m = depth_resized_np*mask
+            depth_resized_np = depth_resized_np[mask]
+            gt_m= gt*mask
+            gt= gt[mask]
+            #pred_depth *= opt.pred_depth_scale_factor
+            ratios = []
+            ratio = np.median(gt) / np.median(depth_resized_np)
+            ratios.append(ratio)
+            depth_resized_np *= ratio
+            depth_resized_np_m *= ratio
+
+            ratios = np.array(ratios)
+            med = np.median(ratios)
+            print(" Scaling ratios | med: {:0.3f} | std: {:0.3f}".format(med, np.std(ratios / med)))
+
+            depth_resized_np[depth_resized_np < MIN_DEPTH] = MIN_DEPTH
+            depth_resized_np[depth_resized_np > MAX_DEPTH] = MAX_DEPTH
+            
+            depth_resized_np_m[depth_resized_np_m < MIN_DEPTH] = MIN_DEPTH
+            depth_resized_np_m[depth_resized_np_m > MAX_DEPTH] = MAX_DEPTH
+           
+        
+            diff_image = np.absolute(gt_m - depth_resized_np_m)
+            #diff_image_np = diff_image.squeeze().cpu().numpy()
+            normalizer = mpl.colors.Normalize(vmin=MIN_DEPTH, vmax=10)
+            mapper = cm.ScalarMappable(norm=normalizer, cmap='turbo')
+            colormapped_im = (mapper.to_rgba(diff_image)[:, :, :3] * 255).astype(np.uint8)
+            im = pil.fromarray(colormapped_im)
+            new_image_name = image_names.split(".")[0]
+            name_dest_im = os.path.join(args.save_path,"{}_diff_image_320.jpeg".format(new_image_name))
+            im.save(name_dest_im)
+
+            rmse = (depth_resized_np - gt) ** 2
+            rmse = np.sqrt(rmse.mean())
+            print(rmse)
+
+            file = open(args.save_path+"/rmse.txt", "a")
+            file.write('{},{},{}'.format(new_image_name,rmse,"\n"))
+            file.close()
+            
             vmax = np.percentile(disp_resized_np, 95)
             normalizer = mpl.colors.Normalize(vmin=disp_resized_np.min(), vmax=vmax)
             mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')
             colormapped_im = (mapper.to_rgba(disp_resized_np)[:, :, :3] * 255).astype(np.uint8)
             im = pil.fromarray(colormapped_im)
+            if not os.path.exists(args.save_path):
+                os.makedirs(args.save_path)
             name_dest_im = os.path.join(args.save_path,"{}_disp.jpeg".format(image_name))
             
             # concatenate both vertically
@@ -183,6 +281,7 @@ def test_simple(args):
             print("   Processed {:d} of {:d} images - saved prediction to {}".format(
                 idx + 1, len(paths), name_dest_im))
 
+    print(timing/32)
     print('-> Done!')
 
 

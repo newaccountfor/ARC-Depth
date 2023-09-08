@@ -7,6 +7,9 @@ import torch.nn as nn
 import torchvision.models as models # a subpackage containing different models 
 import torch.utils.model_zoo as model_zoo#pretrained network
 from hr_layers import *
+import ssl
+ 
+ssl._create_default_https_context = ssl._create_unverified_context
 
 class ResNetMultiImageInput(ResNet):
 #class ResNetMultiImageInput(models.ResNet):
@@ -47,6 +50,8 @@ def resnet_multiimage_input(num_layers, pretrained=True, num_input_images=1):
     model = ResNetMultiImageInput(block_type, blocks, num_input_images=num_input_images)
 
     if pretrained:
+        # loaded = torch.load("/home/inspur/MAX_SPACE/yangli/pretrained-model/resnet50-0676ba61.pth")
+        # loaded = torch.jit.load("/home/inspur/MAX_SPACE/yangli/pretrained-model/resnet50-0676ba61.pth")
         loaded = model_zoo.load_url(models.resnet.model_urls['resnet{}'.format(num_layers)])
         loaded['conv1.weight'] = torch.cat(
             [loaded['conv1.weight']] * num_input_images, 1) / num_input_images
