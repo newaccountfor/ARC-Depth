@@ -8,7 +8,7 @@ Assuming a fresh Anaconda distribution, you can install the dependencies with:
 pip3 install torch==1.3.0 torchvision==0.4.1
 pip install numpy pandas matplotlib scikit-image scipy imageio tqdm cython yacs pypng mmcv==0.4.4 Pillow==6.2.2
 ```
-
+We ran our experiments with PyTorch 1.3.0, CUDA 12.2, Python 3.7.
 <!-- ## Comparing with others
 ![](images/table1.png) -->
 
