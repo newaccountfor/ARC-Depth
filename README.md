@@ -53,6 +53,6 @@ sh test_sample.sh
  - [FeatDepth](https://github.com/sconlyshootery/FeatDepth)
  - [DIFFNet](https://github.com/brandleyzhou/DIFFNet)
 
-## Citation
+<!-- ## Citation
 
-If this codebase or our method helps your research, please cite:
+If this codebase or our method helps your research, please cite: -->
