@@ -10,31 +10,33 @@ This work is implemented using same environment as [FeatDepth](https://github.co
 
 ## Method
 <p align="center">
-  <img src="images/overview.png" alt="frameworkpng" width="800" />
+  <img src="images/overview.png" alt="overviewpng" width="800" />
 </p>
 <p align="center">Overview of our proposed network</p>
 
 ## Training:
 
-for student net training please use:
+for student net training, please use:
 ```
 sh start2train_student.sh
 ```
 and check the sh file to add different losses
 
-for teacher net training please use:
+
+for teacher net training, please use:
 ```
 sh start2train_teacher.sh
 ```
 
 ## Testing:
 
-for student net testing please use:
+for student net testing, please use:
 ```
 sh disp_evaluation_student.sh
 ```
 
-for teacher net testing please use:
+
+for teacher net testing, please use:
 ```
 sh disp_evaluation_teacher.sh
 ```
