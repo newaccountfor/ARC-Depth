@@ -3,7 +3,11 @@
 This repo is for **Devil's in the Reconstruction: Self-Supervised Monocular Depth Estimation from Videos via Adaptive Reconstruction Constraints**
 
 ## Setup
-This work is implemented using same environment as [FeatDepth](https://github.com/sconlyshootery/FeatDepth), please refer to them.
+Assuming a fresh Anaconda distribution, you can install the dependencies with:
+```
+pip3 install torch==1.3.0 torchvision==0.4.1
+pip install numpy pandas matplotlib scikit-image scipy imageio tqdm cython yacs pypng mmcv==0.4.4 Pillow==6.2.2
+```
 
 <!-- ## Comparing with others
 ![](images/table1.png) -->
