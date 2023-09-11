@@ -2,7 +2,7 @@
 
 This repo is for **Devil's in the Reconstruction: Self-Supervised Monocular Depth Estimation from Videos via Adaptive Reconstruction Constraints**
 
-# Setup
+## Setup
 This work is implemented using same environment as [FeatDepth](https://github.com/sconlyshootery/FeatDepth), please refer to them.
 
 <!-- ## Comparing with others
@@ -16,26 +16,26 @@ This work is implemented using same environment as [FeatDepth](https://github.co
 
 ## Training:
 
-- for student net training, please check the sh file for different experiment settings and run:
+for student net training, please check the sh file for different experiment settings and run:
 ```
 sh start2train_student.sh
 ```
 
 
-- for teacher net training, please run:
+for teacher net training, please run:
 ```
 sh start2train_teacher.sh
 ```
 
 ## Testing:
 
-- for student net testing, please run:
+for student net testing, please run:
 ```
 sh disp_evaluation_student.sh
 ```
 
 
-- for teacher net testing, please run:
+for teacher net testing, please run:
 ```
 sh disp_evaluation_teacher.sh
 ```
