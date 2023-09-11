@@ -2,11 +2,11 @@
 
 This repo is for **Devil's in the Reconstruction: Self-Supervised Monocular Depth Estimation from Videos via Adaptive Reconstruction Constraints**
 
-## Comparing with others
-![](images/table1.png)
+# Setup
+This work is implemented using same environment as [FeatDepth](https://github.com/sconlyshootery/FeatDepth), please refer to them.
 
-## Evaluation on selected hard cases:
-![](images/table2.png)
+<!-- ## Comparing with others
+![](images/table1.png) -->
 
 ## Method
 <p align="center">
