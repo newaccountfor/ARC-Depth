@@ -16,27 +16,26 @@ This work is implemented using same environment as [FeatDepth](https://github.co
 
 ## Training:
 
-for student net training, please use:
+for student net training, please check the sh file for different experiment settings and run:
 ```
 sh start2train_student.sh
 ```
-and check the sh file to add different losses
 
 
-for teacher net training, please use:
+for teacher net training, please run:
 ```
 sh start2train_teacher.sh
 ```
 
 ## Testing:
 
-for student net testing, please use:
+for student net testing, please run:
 ```
 sh disp_evaluation_student.sh
 ```
 
 
-for teacher net testing, please use:
+for teacher net testing, please run:
 ```
 sh disp_evaluation_teacher.sh
 ```
